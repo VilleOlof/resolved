@@ -1,0 +1,2 @@
+[env]
+LUA_LIB_NAME = "lua5.1"
