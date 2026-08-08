@@ -1,41 +1,31 @@
 use std::{
     env::{self, VarError},
-    fs::{File, copy},
+    fs::File,
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
+use which::which;
+
 fn main() {
     lua_lib();
-    lua_module();
 }
 
-fn lua_module() {
-    println!("cargo::rerun-if-changed=./lua_module/src");
-    println!("cargo::rerun-if-changed=./lua_module/Cargo.toml");
-
-    let status = Command::new("cargo")
-        .args(["build", "-p", "lua_module", "--release"])
-        .status()
-        .unwrap();
-    assert!(status.success());
-
-    let mut root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    root.push("target/release/lua_module.dll");
-
-    let mut out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    out.push("lua_module.dll");
-
-    copy(root, out).unwrap();
-}
+const NOT_INSTALLED_ERR: &str = "currently isn't installed or not in a place where the build script can reach it (like $PATH). Install dumpbin or build the 'lua5.1.lib' manually to get vinci to compile. See https://github.com/VilleOlof/vinci#building";
+const DEFAULT_DAVINCI_RESOLVE: &str =
+    "C:/Program Files/Blackmagic Design/DaVinci Resolve/lua5.1.dll";
+const ENV_DV_LUA: &str = "DAVINCI_RESOLVE_LUA_DLL";
+const DEF: &str = "lua5.1.def";
+const LIB: &str = "lua5.1.lib";
+const DLL: &str = "lua5.1.dll";
 
 fn lua_lib() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let lib_src = out.join(LIB);
 
     if !lib_src.exists() {
-        println!("building '{LIB}' from scratch");
+        check_installations(&["dumpbin", "lib"]);
 
         // we just want to open file to check permission
         let dll_path = davinci_resolve_path();
@@ -50,21 +40,11 @@ fn lua_lib() {
             },
         }
 
-        let dumpbin_out = Command::new("dumpbin")
-            .arg("/exports")
-            .arg(dll_path.display().to_string())
-            .output()
-            .unwrap();
-        let dumpbin = String::from_utf8(dumpbin_out.stdout)
-            .unwrap()
-            .lines()
-            .map(|s| s.to_string())
-            .collect();
-
+        let dumpbin = call_dumpbin(&dll_path);
         let exports = parse_dumpbin(dumpbin);
 
         let def_file = format!(
-            r#"LIBRARY lua5.1.dll
+            r#"LIBRARY {DLL}
 EXPORTS
 {}"#,
             exports.join("\n")
@@ -73,33 +53,35 @@ EXPORTS
         let def_path = out.join(DEF);
         std::fs::write(def_path, def_file).unwrap();
 
-        Command::new("lib")
-            .args([
-                &format!("/def:{DEF}"),
-                "/machine:x64",
-                &format!("/out:{LIB}"),
-            ])
-            .current_dir(&out)
-            .spawn()
-            .unwrap();
+        call_lib(&out);
     }
 
+    // panic!("{out:?}");
     unsafe {
         env::set_var("LUA_LIB", out.to_string_lossy().to_string());
     }
+    println!("cargo:rustc-env=LUA_LIB={}", out.display());
 }
 
-const DEFAULT_DAVINCI_RESOLVE: &str =
-    "C:/Program Files/Blackmagic Design/DaVinci Resolve/lua5.1.dll";
-const ENV_DV_LUA: &str = "DAVINCI_RESOLVE_LUA_DLL";
-const LIB: &str = "lua5.1.lib";
-const DEF: &str = "lua5.1.def";
 fn davinci_resolve_path() -> PathBuf {
     match env::var(ENV_DV_LUA) {
         Ok(s) => PathBuf::from(s),
         Err(VarError::NotPresent) => PathBuf::from(DEFAULT_DAVINCI_RESOLVE),
         Err(VarError::NotUnicode(s)) => panic!("Not Unicode: {s:?}"),
     }
+}
+
+fn call_dumpbin(dll_path: &Path) -> Vec<String> {
+    let dumpbin_out = Command::new("dumpbin")
+        .arg("/exports")
+        .arg(dll_path.display().to_string())
+        .output()
+        .unwrap();
+    String::from_utf8(dumpbin_out.stdout)
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 // 100% better way to parse this but it works
@@ -132,4 +114,26 @@ fn parse_dumpbin(lines: Vec<String>) -> Vec<String> {
     }
 
     exports
+}
+
+fn call_lib(out: &Path) {
+    Command::new("lib")
+        .args([
+            &format!("/def:{DEF}"),
+            "/machine:x64",
+            &format!("/out:{LIB}"),
+        ])
+        .current_dir(&out)
+        .spawn()
+        .unwrap();
+}
+
+fn check_installations(binaries: &[&str]) {
+    for bin in binaries {
+        match which(bin) {
+            Ok(_) => (),
+            Err(which::Error::CannotFindBinaryPath) => panic!("{bin} {NOT_INSTALLED_ERR}"),
+            Err(e) => panic!("{e:?}"),
+        }
+    }
 }

@@ -1,7 +1,9 @@
-use std::time::Duration;
+use std::{
+    io::{self, Write},
+    time::Duration,
+};
 
 use mlua::prelude::*;
-use serde::Serialize;
 use tiny_http::{Request, Response, Server};
 
 #[mlua::lua_module]
@@ -20,7 +22,12 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
 
     for mut request in server.incoming_requests() {
         let res = match handle_req(lua, &mut request) {
-            Err(e) => Response::from_string(format!("something went wrong: {e:?}")),
+            Err(e) => {
+                let s = e.to_string();
+                let res = rmp_serde::to_vec(&ScriptResponse::Err(s))
+                    .expect("Failed to serialize err string");
+                Response::from_data(res)
+            }
             Ok(buf) => Response::from_data(buf),
         }
         .with_status_code(200);
@@ -32,7 +39,15 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
 }
 
 fn setup_globals(lua: &Lua) -> LuaResult<()> {
-    let resolve: LuaAnyUserData = lua.load("return Resolve()").eval()?;
+    let resolve: LuaAnyUserData = match lua.load("return Resolve()").eval() {
+        Ok(r) => r,
+        Err(e) => {
+            let mut stdout = io::stdout().lock();
+            stdout.write_all(&[99, 99, 99, 99, 99, 99, 99, 99]).unwrap();
+            stdout.flush().unwrap();
+            return Err(e);
+        }
+    };
     let globals = lua.globals();
     globals.set("self", resolve.clone())?;
     globals.set("resolve", resolve)?;
@@ -40,6 +55,7 @@ fn setup_globals(lua: &Lua) -> LuaResult<()> {
     Ok(())
 }
 
+/// Handles a specific request
 fn handle_req(lua: &Lua, request: &mut Request) -> Result<Vec<u8>, RequestError> {
     let mut input = String::new();
     request.as_reader().read_to_string(&mut input)?;
@@ -50,20 +66,26 @@ fn handle_req(lua: &Lua, request: &mut Request) -> Result<Vec<u8>, RequestError>
     let value: LuaValue = lua_code.eval()?;
     let eval_time = eval_i.elapsed();
 
-    let buffer = rmp_serde::to_vec(&ScriptResponse { value, eval_time })?;
+    let buffer = rmp_serde::to_vec(&ScriptResponse::Ok { value, eval_time })?;
 
     Ok(buffer)
 }
 
+/// Tells the client that this server is ready and can accept incoming requests
 fn ready() {
     // this is for the client library to know that the script env has fully started
-    println!("vinci_starting");
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(&[10, 20, 30, 40, 50, 60, 70, 80]).unwrap();
+    stdout.flush().unwrap();
 }
 
-#[derive(Debug, Serialize)]
-struct ScriptResponse {
-    value: LuaValue,
-    eval_time: Duration,
+#[derive(Debug, serde::Serialize)]
+pub enum ScriptResponse {
+    Err(String),
+    Ok {
+        value: LuaValue,
+        eval_time: Duration,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
