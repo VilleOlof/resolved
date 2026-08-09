@@ -1,6 +1,8 @@
+#![doc = include_str!("../readme.md")]
+
 #[cfg(not(windows))]
 compile_error!(
-    "vinci only works on windows due to dll's and the way the library is structured with lua modules"
+    "'resolved' only works on windows due to dll's, paths and the way the library is structured with lua modules"
 );
 
 mod error;
@@ -18,15 +20,15 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test() {
-        let resolve = Resolve::new().await.unwrap();
+    async fn simple() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
 
-        let t = std::time::Instant::now();
-        let s = resolve
-            .deserialize::<String>("return self:GetVersionString()".to_string())
-            .await
-            .unwrap();
-        let t = t.elapsed();
-        println!("[{:?}]: {s:?}", t);
+        let ver = resolve
+            .execute::<String>("return self:GetVersionString()".to_string())
+            .await?;
+
+        assert!(!ver.is_empty());
+
+        Ok(())
     }
 }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures::future::join_all;
 use serde::de::DeserializeOwned;
 use tokio::{
     sync::{Mutex, Semaphore},
@@ -42,10 +43,7 @@ impl PooledResolve {
         }
 
         let instances: Result<Result<Vec<Resolve>, Error>, JoinError> =
-            futures::future::join_all(handles)
-                .await
-                .into_iter()
-                .collect();
+            join_all(handles).await.into_iter().collect();
         let instances = instances??;
 
         let pool = InternalPool {
@@ -81,40 +79,26 @@ impl PooledResolve {
     }
 }
 
-#[tokio::test]
-async fn pool() -> Result<(), Error> {
-    let t = std::time::Instant::now();
-    let r = Resolve::new().await?;
-    let mut s = Vec::with_capacity(64);
-    let tr = std::time::Instant::now();
-    for _ in 0..64 {
-        let v = r
-            .execute::<String>(r#"return self:GetVersionString()"#)
-            .await?;
-        s.push(v);
-    }
-    println!("resolve: {:?} ({:?})", t.elapsed(), tr.elapsed());
-    assert_eq!(64, s.len());
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let t = std::time::Instant::now();
-    let pool = PooledResolve::new(4).await?;
-    let mut v = Vec::with_capacity(64);
-    let tr = std::time::Instant::now();
-    for _ in 0..64 {
-        let p = pool.clone();
-        v.push(tokio::task::spawn(async move {
-            p.execute::<String>("return self:GetVersionString()")
-                .await
-                .unwrap()
-        }));
-    }
-    let all: Vec<String> = futures::future::join_all(v)
-        .await
-        .into_iter()
-        .map(|x| x.unwrap())
-        .collect();
-    println!("pooled: {:?} ({:?})", t.elapsed(), tr.elapsed());
-    assert_eq!(64, all.len());
+    #[tokio::test]
+    async fn pool() -> Result<(), Error> {
+        let pool = PooledResolve::new(4).await?;
+        let mut v = Vec::with_capacity(64);
+        for _ in 0..64 {
+            let p = pool.clone();
+            v.push(tokio::task::spawn(async move {
+                p.execute::<String>("return self:GetVersionString()")
+                    .await
+                    .unwrap()
+            }));
+        }
+        let all: Vec<String> = join_all(v).await.into_iter().map(|x| x.unwrap()).collect();
 
-    Ok(())
+        assert_eq!(64, all.len());
+
+        Ok(())
+    }
 }
