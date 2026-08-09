@@ -5,14 +5,13 @@ compile_error!(
 
 mod error;
 mod pool;
-mod port;
 mod resolve;
 mod script;
 
 pub use error::Error;
 pub use pool::PooledResolve;
 pub use resolve::Resolve;
-pub use script::ScriptResponse;
+pub use resolved_shared::ScriptResponse;
 
 #[cfg(test)]
 mod tests {

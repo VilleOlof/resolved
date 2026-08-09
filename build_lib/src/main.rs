@@ -1,9 +1,9 @@
 use std::{
-    env::{self, VarError},
+    env::{self, VarError, args},
     fs::File,
     io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use which::which;
@@ -21,10 +21,16 @@ const LIB: &str = "lua5.1.lib";
 const DLL: &str = "lua5.1.dll";
 
 fn lua_lib() {
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let mut args = args();
+    args.next();
+    let out = PathBuf::from(
+        args.next()
+            .expect("missing argument, first argument should be path to generated dir"),
+    );
+    let rerun = args.next().map(|x| x == "rerun").unwrap_or_default();
     let lib_src = out.join(LIB);
 
-    if !lib_src.exists() {
+    if rerun || !lib_src.exists() {
         check_installations(&["dumpbin", "lib"]);
 
         // we just want to open file to check permission
@@ -55,12 +61,6 @@ EXPORTS
 
         call_lib(&out);
     }
-
-    // panic!("{out:?}");
-    unsafe {
-        env::set_var("LUA_LIB", out.to_string_lossy().to_string());
-    }
-    println!("cargo:rustc-env=LUA_LIB={}", out.display());
 }
 
 fn davinci_resolve_path() -> PathBuf {
@@ -124,7 +124,8 @@ fn call_lib(out: &Path) {
             &format!("/out:{LIB}"),
         ])
         .current_dir(&out)
-        .spawn()
+        .stdout(Stdio::piped())
+        .status()
         .unwrap();
 }
 

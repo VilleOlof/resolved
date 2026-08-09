@@ -1,3 +1,5 @@
+use crate::resolve::MODULE_TIMEOUT;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Lua module was unable to reach DaVinci Resolve. Are you sure it's open?")]
@@ -10,6 +12,10 @@ pub enum Error {
     LuaModuleErr(String),
     #[error("permits got out of sync with actual instances")]
     OutOfSyncSemaphore,
+    #[error("Module didn't respond with any packet within {:?}", MODULE_TIMEOUT)]
+    ModuleTimeout,
+    #[error("Packet type from Module was invalid")]
+    InvalidPacketType,
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -25,4 +31,6 @@ pub enum Error {
     Join(#[from] tokio::task::JoinError),
     #[error(transparent)]
     Acquire(#[from] tokio::sync::AcquireError),
+    #[error(transparent)]
+    FromUtf8(#[from] std::string::FromUtf8Error),
 }

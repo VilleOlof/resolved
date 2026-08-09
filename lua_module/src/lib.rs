@@ -1,9 +1,7 @@
-use std::{
-    io::{self, Write},
-    time::Duration,
-};
+use std::{io::Write, net::TcpStream};
 
 use mlua::prelude::*;
+use resolved_shared::{PacketType, ScriptResponse};
 use tiny_http::{Request, Response, Server};
 
 #[mlua::lua_module]
@@ -14,17 +12,43 @@ fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
 }
 
 fn start(lua: &Lua, port: u16) -> LuaResult<()> {
-    setup_globals(lua)?;
+    let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    match _start(lua, &mut client) {
+        Ok(unit) => Ok(unit),
+        Err(e) => {
+            // write packet type 'error' with a length prefixed str of the formatted err
+            let str = e.to_string();
+            client.write(&[PacketType::Error as u8]).unwrap();
+            client.write(&(str.len() as u32).to_be_bytes()).unwrap();
+            client.write(&str.into_bytes()).unwrap();
+            client.flush().unwrap();
+            match e {
+                ModuleError::Lua(l) => Err(l),
+                other => Err(LuaError::external(other)),
+            }
+        }
+    }
+}
 
-    let server = Server::http(format!("0.0.0.0:{port}")).unwrap();
+fn _start(lua: &Lua, client: &mut TcpStream) -> Result<(), ModuleError> {
+    setup_globals(lua, client)?;
 
-    ready();
+    let server = Server::http("0.0.0.0:0")?;
+    let module_port = server
+        .server_addr()
+        .to_ip()
+        .ok_or(ModuleError::NoIp)?
+        .port();
+
+    client.write(&[PacketType::Ready as u8])?;
+    client.write(&module_port.to_be_bytes())?;
+    client.flush()?;
 
     for mut request in server.incoming_requests() {
         let res = match handle_req(lua, &mut request) {
             Err(e) => {
                 let s = e.to_string();
-                let res = rmp_serde::to_vec(&ScriptResponse::Err(s))
+                let res = rmp_serde::to_vec(&ScriptResponse::<()>::Err(s))
                     .expect("Failed to serialize err string");
                 Response::from_data(res)
             }
@@ -38,14 +62,13 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
     Ok(())
 }
 
-fn setup_globals(lua: &Lua) -> LuaResult<()> {
+fn setup_globals(lua: &Lua, stream: &mut TcpStream) -> Result<(), ModuleError> {
     let resolve: LuaAnyUserData = match lua.load("return Resolve()").eval() {
         Ok(r) => r,
         Err(e) => {
-            let mut stdout = io::stdout().lock();
-            stdout.write_all(&[99, 99, 99, 99, 99, 99, 99, 99]).unwrap();
-            stdout.flush().unwrap();
-            return Err(e);
+            stream.write(&[PacketType::NoResolve as u8])?;
+            stream.flush()?;
+            return Err(ModuleError::Lua(e));
         }
     };
     let globals = lua.globals();
@@ -71,23 +94,6 @@ fn handle_req(lua: &Lua, request: &mut Request) -> Result<Vec<u8>, RequestError>
     Ok(buffer)
 }
 
-/// Tells the client that this server is ready and can accept incoming requests
-fn ready() {
-    // this is for the client library to know that the script env has fully started
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(&[10, 20, 30, 40, 50, 60, 70, 80]).unwrap();
-    stdout.flush().unwrap();
-}
-
-#[derive(Debug, serde::Serialize)]
-pub enum ScriptResponse {
-    Err(String),
-    Ok {
-        value: LuaValue,
-        eval_time: Duration,
-    },
-}
-
 #[derive(Debug, thiserror::Error)]
 enum RequestError {
     #[error(transparent)]
@@ -96,4 +102,17 @@ enum RequestError {
     Rmp(#[from] rmp_serde::encode::Error),
     #[error(transparent)]
     Lua(#[from] mlua::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ModuleError {
+    #[error("No ip found")]
+    NoIp,
+
+    #[error(transparent)]
+    Lua(#[from] LuaError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Any(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }

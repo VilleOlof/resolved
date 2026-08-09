@@ -1,15 +1,20 @@
-use std::{fmt::Debug, process::Stdio, sync::Arc};
+use std::{fmt::Debug, path::Path, process::Stdio, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use reqwest::{Client, Url};
+use resolved_shared::PacketType;
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+    process::Command,
+    select,
+};
 
 use crate::{
     Error, ScriptResponse,
-    port::random_port,
-    script::{LUA_MODULE, MODULE_NAME, READY_CALL, RESOLVE_FAILED, dll_script, fuscript},
+    script::{LUA_MODULE, MODULE_NAME, dll_script, fuscript},
 };
 
 /// A connection to *DaVinci Resolve*.\
@@ -61,15 +66,11 @@ impl Resolve {
     /// # Errors
     /// If the internal lua module fails to reach *DaVinci Resolve* or the creation of this instance fails
     pub async fn new() -> Result<Self, Error> {
-        let port = random_port().await?;
-        Self::new_with_port(port).await
-    }
-
-    /// Creates a new [`Resolve`] connection instance with a specific port to the underlying script server.  
-    pub async fn new_with_port(port: u16) -> Result<Self, Error> {
         let client = Client::builder().user_agent(APP_USER_AGENT).build()?;
-        let url = Url::parse(&format!("http://127.0.0.1:{port}"))?;
         let temp_dir = Arc::new(TempDir::new()?);
+
+        let port = Self::start(&temp_dir).await?;
+        let url = Url::parse(&format!("http://127.0.0.1:{port}"))?;
 
         let s = Self {
             port,
@@ -77,7 +78,6 @@ impl Resolve {
             client,
             temp_dir,
         };
-        s.start().await?;
         Ok(s)
     }
 
@@ -87,32 +87,20 @@ impl Resolve {
     /// # Errors
     /// If the lua module fails to reach *DaVinci Resolve* or for some other reason the lua module itself crashes before starting the http server.
     ///
-    async fn start(&self) -> Result<(), Error> {
-        let dll = self.temp_dir.path().join(format!("{MODULE_NAME}.dll"));
+    async fn start(temp_dir: &TempDir) -> Result<u16, Error> {
+        let dll = temp_dir.path().join(format!("{MODULE_NAME}.dll"));
         tokio::fs::write(&dll, LUA_MODULE).await?;
 
-        let script = dll_script(self.temp_dir.path());
-        let script_path = self.temp_dir.path().join("script.lua");
+        let script = dll_script(temp_dir.path());
+        let script_path = temp_dir.path().join("script.lua");
         tokio::fs::write(&script_path, &script).await?;
 
-        let mut child = Command::new(fuscript()?)
-            .arg("-q")
-            .args([script_path.display().to_string(), self.port.to_string()])
-            .stdout(Stdio::piped())
-            .spawn()?;
+        let (listener, port) = start_client_server().await?;
 
-        let mut stdout = child.stdout.take().ok_or(Error::NoStdout)?;
+        spawn_script_server(&script_path, port).await?;
+        let (mut stream, _addr) = listener.accept().await?;
 
-        let mut buf = [0; 8];
-        stdout.read_exact(&mut buf).await?;
-
-        if buf == READY_CALL {
-            Ok(())
-        } else if buf == RESOLVE_FAILED {
-            Err(Error::UnableToReachDavinciResolve)
-        } else {
-            Err(Error::FuscriptFailed(buf))
-        }
+        handle_module_request(&mut stream).await
     }
 
     /// Send and execute a piece of `lua` code to *DaVinci Resolve*.  
@@ -186,5 +174,57 @@ impl Resolve {
         let req = self.client.post(self.url.clone()).body(lua_script);
         let res = req.send().await?;
         Ok(res.bytes().await?)
+    }
+}
+
+async fn start_client_server() -> Result<(TcpListener, u16), Error> {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
+}
+
+async fn spawn_script_server(script_path: &Path, port: u16) -> Result<(), Error> {
+    let fuscript = fuscript()?;
+    let script_path = script_path.display().to_string();
+    let port = port.to_string();
+    tokio::spawn(async move {
+        Command::new(fuscript)
+            .arg("-q")
+            .args([script_path, port])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+    })
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) const MODULE_TIMEOUT: Duration = Duration::from_secs(3);
+
+async fn handle_module_request(stream: &mut TcpStream) -> Result<u16, Error> {
+    async fn read_err(stream: &mut TcpStream) -> Result<Error, Error> {
+        let len = stream.read_u32().await?;
+        let mut s = vec![0; len as usize];
+        stream.read_exact(&mut s).await?;
+        let err = String::from_utf8(s)?;
+        Ok(Error::LuaModuleErr(err))
+    }
+
+    let sleep = tokio::time::sleep(MODULE_TIMEOUT);
+    tokio::pin!(sleep);
+
+    select! {
+        _ = &mut sleep => {
+            Err(Error::ModuleTimeout)
+        }
+        p = stream.read_u8() => {
+            let packet_type = PacketType::from_u8(p?).ok_or(Error::InvalidPacketType)?;
+            match packet_type {
+                PacketType::Ready => Ok(stream.read_u16().await?),
+                PacketType::NoResolve => Err(Error::UnableToReachDavinciResolve),
+                PacketType::Error => Err(read_err(stream).await?)
+            }
+        }
     }
 }

@@ -87,6 +87,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "build_lib"
+version = "0.1.0"
+dependencies = [
+ "which",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,11 +941,11 @@ name = "lua_module"
 version = "0.1.0"
 dependencies = [
  "mlua",
+ "resolved_shared",
  "rmp-serde",
  "serde",
  "thiserror",
  "tiny_http",
- "which",
 ]
 
 [[package]]
@@ -1331,12 +1338,20 @@ dependencies = [
  "criterion",
  "futures",
  "reqwest",
+ "resolved_shared",
  "rmp-serde",
  "serde",
  "tempfile",
  "thiserror",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "resolved_shared"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
