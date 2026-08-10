@@ -2,20 +2,54 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-pub enum PacketType {
+pub enum PrePacket {
+    /// Sent by the module to tell the client that it's server is ready for connections.  
+    /// The module returns its own port back to the client
     Ready = 0,
+    /// Sent by module to tell the client that it was unable to reach/get the Resolve() object
     NoResolve = 1,
+    /// Sent by the module to tell the client that some error happened while setting up the module
+    /// The error formatted as a string is sent back as the response.
     Error = 2,
 }
 
-impl PacketType {
+impl PrePacket {
     pub fn from_u8(b: u8) -> Option<Self> {
         Some(match b {
             0 => Self::Ready,
             1 => Self::NoResolve,
             2 => Self::Error,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum MsgPacket {
+    /// Client sends a piece of lua code to execute and return the value back to the client
+    Execute = 0,
+    /// Client sends a piece of lua code to execute and instead of sending back the value,
+    /// The module will store the value in the lua registry and return back a unique id to that value
+    Store = 1,
+    StoreWith = 2,
+    /// Client sends a piece of code and an item reference id so `self` becomes that registry value.  
+    /// And the value returned will be sent back to the client.
+    ExecuteWith = 3,
+    /// A reference to a registry item was dropped on the client so it needs to be removed in the module
+    DropItem = 4,
+}
+
+impl MsgPacket {
+    pub fn from_u8(b: u8) -> Option<Self> {
+        Some(match b {
+            0 => Self::Execute,
+            1 => Self::Store,
+            2 => Self::StoreWith,
+            3 => Self::ExecuteWith,
+            4 => Self::DropItem,
             _ => return None,
         })
     }

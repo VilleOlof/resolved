@@ -90,7 +90,7 @@ mod tests {
         for _ in 0..64 {
             let p = pool.clone();
             v.push(tokio::task::spawn(async move {
-                p.execute::<String>("return self:GetVersionString()")
+                p.execute::<String>("return resolve:GetVersionString()")
                     .await
                     .unwrap()
             }));

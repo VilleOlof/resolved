@@ -1,8 +1,17 @@
-use std::{io::Write, net::TcpStream};
+use std::{io::Write, net::TcpStream, time::Duration};
 
 use mlua::prelude::*;
-use resolved_shared::{PacketType, ScriptResponse};
-use tiny_http::{Request, Response, Server};
+use resolved_shared::{PrePacket, ScriptResponse};
+use tiny_http::{Response, Server};
+
+mod error;
+mod item_ref;
+mod packet;
+mod request;
+
+use error::{ModuleError, RequestError};
+use item_ref::ItemRefHandler;
+use request::handle_req;
 
 #[mlua::lua_module]
 fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
@@ -18,7 +27,7 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
         Err(e) => {
             // write packet type 'error' with a length prefixed str of the formatted err
             let str = e.to_string();
-            client.write(&[PacketType::Error as u8]).unwrap();
+            client.write(&[PrePacket::Error as u8]).unwrap();
             client.write(&(str.len() as u32).to_be_bytes()).unwrap();
             client.write(&str.into_bytes()).unwrap();
             client.flush().unwrap();
@@ -31,7 +40,11 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
 }
 
 fn _start(lua: &Lua, client: &mut TcpStream) -> Result<(), ModuleError> {
-    setup_globals(lua, client)?;
+    let globals_ref = lua.globals().clone();
+    let resolve = resolve(lua, client)?;
+    globals_ref.set("resolve", &resolve)?;
+
+    lua.set_globals(globals_ref.clone())?;
 
     let server = Server::http("0.0.0.0:0")?;
     let module_port = server
@@ -40,12 +53,16 @@ fn _start(lua: &Lua, client: &mut TcpStream) -> Result<(), ModuleError> {
         .ok_or(ModuleError::NoIp)?
         .port();
 
-    client.write(&[PacketType::Ready as u8])?;
+    client.write(&[PrePacket::Ready as u8])?;
     client.write(&module_port.to_be_bytes())?;
     client.flush()?;
 
+    let mut item_ref_handler = ItemRefHandler::new(lua);
+
     for mut request in server.incoming_requests() {
-        let res = match handle_req(lua, &mut request) {
+        lua.set_globals(globals_ref.clone())?;
+
+        let res = match handle_req(lua, &mut item_ref_handler, &resolve, &mut request) {
             Err(e) => {
                 let s = e.to_string();
                 let res = rmp_serde::to_vec(&ScriptResponse::<()>::Err(s))
@@ -62,57 +79,20 @@ fn _start(lua: &Lua, client: &mut TcpStream) -> Result<(), ModuleError> {
     Ok(())
 }
 
-fn setup_globals(lua: &Lua, stream: &mut TcpStream) -> Result<(), ModuleError> {
-    let resolve: LuaAnyUserData = match lua.load("return Resolve()").eval() {
-        Ok(r) => r,
+fn resolve(lua: &Lua, stream: &mut TcpStream) -> Result<LuaAnyUserData, ModuleError> {
+    match lua.load("return Resolve()").eval() {
+        Ok(r) => Ok(r),
         Err(e) => {
-            stream.write(&[PacketType::NoResolve as u8])?;
+            stream.write(&[PrePacket::NoResolve as u8])?;
             stream.flush()?;
             return Err(ModuleError::Lua(e));
         }
-    };
-    let globals = lua.globals();
-    globals.set("self", resolve.clone())?;
-    globals.set("resolve", resolve)?;
-
-    Ok(())
+    }
 }
 
-/// Handles a specific request
-fn handle_req(lua: &Lua, request: &mut Request) -> Result<Vec<u8>, RequestError> {
-    let mut input = String::new();
-    request.as_reader().read_to_string(&mut input)?;
-
-    let lua_code = lua.load(input.trim());
-
+fn execute(lua: &Lua, code: String) -> Result<(LuaValue, Duration), RequestError> {
+    let lua_code = lua.load(code.trim());
     let eval_i = std::time::Instant::now();
     let value: LuaValue = lua_code.eval()?;
-    let eval_time = eval_i.elapsed();
-
-    let buffer = rmp_serde::to_vec(&ScriptResponse::Ok { value, eval_time })?;
-
-    Ok(buffer)
-}
-
-#[derive(Debug, thiserror::Error)]
-enum RequestError {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Rmp(#[from] rmp_serde::encode::Error),
-    #[error(transparent)]
-    Lua(#[from] mlua::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ModuleError {
-    #[error("No ip found")]
-    NoIp,
-
-    #[error(transparent)]
-    Lua(#[from] LuaError),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Any(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    Ok((value, eval_i.elapsed()))
 }

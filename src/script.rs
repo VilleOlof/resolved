@@ -1,6 +1,16 @@
 use std::{
     env::{self, VarError},
     path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
+
+use resolved_shared::PrePacket;
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+    process::Command,
+    select,
 };
 
 use crate::Error;
@@ -15,6 +25,7 @@ pub(crate) const MODULE_NAME: &str = "vinci";
 /// The default path on windows to `fuscript.exe`
 pub(crate) const DEFAULT_FUSCRIPT: &str =
     "C:/Program Files/Blackmagic Design/DaVinci Resolve/fuscript.exe";
+pub(crate) const MODULE_TIMEOUT: Duration = Duration::from_secs(10);
 
 type LuaCode = String;
 
@@ -38,5 +49,55 @@ pub(crate) fn fuscript() -> Result<PathBuf, Error> {
         Ok(s) => Ok(PathBuf::from(s)),
         Err(VarError::NotPresent) => Ok(PathBuf::from(DEFAULT_FUSCRIPT)),
         Err(e) => Err(e.into()),
+    }
+}
+
+pub(crate) async fn start_client_server() -> Result<(TcpListener, u16), Error> {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
+}
+
+pub(crate) async fn spawn_script_server(script_path: &Path, port: u16) -> Result<(), Error> {
+    let fuscript = fuscript()?;
+    let script_path = script_path.display().to_string();
+    let port = port.to_string();
+    tokio::spawn(async move {
+        Command::new(fuscript)
+            .arg("-q")
+            .args([script_path, port])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+    })
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn handle_module_request(stream: &mut TcpStream) -> Result<u16, Error> {
+    async fn read_err(stream: &mut TcpStream) -> Result<Error, Error> {
+        let len = stream.read_u32().await?;
+        let mut s = vec![0; len as usize];
+        stream.read_exact(&mut s).await?;
+        let err = String::from_utf8(s)?;
+        Ok(Error::LuaModuleErr(err))
+    }
+
+    let sleep = tokio::time::sleep(MODULE_TIMEOUT);
+    tokio::pin!(sleep);
+
+    select! {
+        _ = &mut sleep => {
+            Err(Error::ModuleTimeout)
+        }
+        p = stream.read_u8() => {
+            let packet_type = PrePacket::from_u8(p?).ok_or(Error::InvalidPacketType)?;
+            match packet_type {
+                PrePacket::Ready => Ok(stream.read_u16().await?),
+                PrePacket::NoResolve => Err(Error::UnableToReachDavinciResolve),
+                PrePacket::Error => Err(read_err(stream).await?)
+            }
+        }
     }
 }

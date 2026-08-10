@@ -1,4 +1,4 @@
-use crate::resolve::MODULE_TIMEOUT;
+use crate::script::MODULE_TIMEOUT;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

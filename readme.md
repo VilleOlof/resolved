@@ -65,13 +65,7 @@ Or locally if you got DaVinci Resolve installed:
 
 ### References
 
-Every piece of `Lua` code executed lives in it's own bubble, and some variables in `Lua` cannot be returned to `Rust`.  
-These are instances to items in *DaVinci Resolve*, like the a timeline, clip or project.  
-Those can only remain in `Lua`, so if you want to keep referencing a certain instance of an item,  
-you have to manually find that specific item again every time.  
-*(most of these have a `GetUniqueId` fn so you can check their id to find the right one)*
-
-*more specifically, `userdata` values cannot be serialized and sent back to Rust*
+<TODO: ItemRef>
 
 ## Pooled Instances
 
