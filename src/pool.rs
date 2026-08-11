@@ -7,7 +7,7 @@ use tokio::{
     task::JoinError,
 };
 
-use crate::{Error, Resolve};
+use crate::{Error, Resolve, Script};
 
 /// A pool of [`Resolve`] instances,\
 /// Whenever you run [`PooledResolve::execute`], it will grab one of the available [`Resolve`] instances and use it to run the specified code.
@@ -56,7 +56,7 @@ impl PooledResolve {
         })
     }
 
-    pub async fn execute<T>(&self, lua_script: impl Into<String>) -> Result<T, Error>
+    pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
         T: DeserializeOwned,
     {
@@ -67,7 +67,7 @@ impl PooledResolve {
             inst.pop().ok_or(Error::OutOfSyncSemaphore)?
         };
 
-        let value_result = instance.execute::<T>(lua_script).await;
+        let value_result = instance.execute::<T>(script).await;
 
         {
             self.inner.instances.lock().await.push(instance);

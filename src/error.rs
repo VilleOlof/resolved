@@ -1,4 +1,4 @@
-use crate::script::MODULE_TIMEOUT;
+use crate::script_handler::MODULE_TIMEOUT;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -16,15 +16,17 @@ pub enum Error {
     ModuleTimeout,
     #[error("Packet type from Module was invalid")]
     InvalidPacketType,
+    #[error(
+        "Tried to use an ItemRef on a foreign Resolve instance whose id didn't match: {0} != {1}"
+    )]
+    MismatchedItemRef(u64, u64),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    UrlParse(#[from] url::ParseError),
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
-    #[error(transparent)]
     RmpDecode(#[from] rmp_serde::decode::Error),
+    #[error(transparent)]
+    RmpEncode(#[from] rmp_serde::encode::Error),
     #[error(transparent)]
     Var(#[from] std::env::VarError),
     #[error(transparent)]

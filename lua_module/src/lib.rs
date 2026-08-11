@@ -1,17 +1,24 @@
-use std::{io::Write, net::TcpStream, time::Duration};
+use std::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener},
+    time::Duration,
+};
 
 use mlua::prelude::*;
-use resolved_shared::{PrePacket, ScriptResponse};
-use tiny_http::{Response, Server};
 
+mod client;
 mod error;
+mod handler;
 mod item_ref;
-mod packet;
 mod request;
 
 use error::{ModuleError, RequestError};
+use handler::handle_req;
 use item_ref::ItemRefHandler;
-use request::handle_req;
+
+use crate::{
+    client::Client,
+    request::{Request, serialize_err},
+};
 
 #[mlua::lua_module]
 fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
@@ -21,16 +28,11 @@ fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
 }
 
 fn start(lua: &Lua, port: u16) -> LuaResult<()> {
-    let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut client = Client::new(port).unwrap();
     match _start(lua, &mut client) {
         Ok(unit) => Ok(unit),
         Err(e) => {
-            // write packet type 'error' with a length prefixed str of the formatted err
-            let str = e.to_string();
-            client.write(&[PrePacket::Error as u8]).unwrap();
-            client.write(&(str.len() as u32).to_be_bytes()).unwrap();
-            client.write(&str.into_bytes()).unwrap();
-            client.flush().unwrap();
+            client.write_err(e.to_string()).unwrap();
             match e {
                 ModuleError::Lua(l) => Err(l),
                 other => Err(LuaError::external(other)),
@@ -39,52 +41,41 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
     }
 }
 
-fn _start(lua: &Lua, client: &mut TcpStream) -> Result<(), ModuleError> {
+fn _start(lua: &Lua, client: &mut Client) -> Result<(), ModuleError> {
     let globals_ref = lua.globals().clone();
     let resolve = resolve(lua, client)?;
     globals_ref.set("resolve", &resolve)?;
 
     lua.set_globals(globals_ref.clone())?;
 
-    let server = Server::http("0.0.0.0:0")?;
-    let module_port = server
-        .server_addr()
-        .to_ip()
-        .ok_or(ModuleError::NoIp)?
-        .port();
+    let host = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+    let server = TcpListener::bind(host)?;
 
-    client.write(&[PrePacket::Ready as u8])?;
-    client.write(&module_port.to_be_bytes())?;
-    client.flush()?;
+    let module_port = server.local_addr()?.port();
+    client.write_port(module_port)?;
 
     let mut item_ref_handler = ItemRefHandler::new(lua);
 
-    for mut request in server.incoming_requests() {
+    for stream in server.incoming() {
+        let mut request = Request::new(stream?);
         lua.set_globals(globals_ref.clone())?;
 
         let res = match handle_req(lua, &mut item_ref_handler, &resolve, &mut request) {
-            Err(e) => {
-                let s = e.to_string();
-                let res = rmp_serde::to_vec(&ScriptResponse::<()>::Err(s))
-                    .expect("Failed to serialize err string");
-                Response::from_data(res)
-            }
-            Ok(buf) => Response::from_data(buf),
-        }
-        .with_status_code(200);
+            Err(e) => serialize_err(e.to_string()).expect("Failed to serialize err string"),
+            Ok(buf) => buf,
+        };
 
-        let _ = request.respond(res);
+        let _ = request.send(res);
     }
 
     Ok(())
 }
 
-fn resolve(lua: &Lua, stream: &mut TcpStream) -> Result<LuaAnyUserData, ModuleError> {
+fn resolve(lua: &Lua, client: &mut Client) -> Result<LuaAnyUserData, ModuleError> {
     match lua.load("return Resolve()").eval() {
         Ok(r) => Ok(r),
         Err(e) => {
-            stream.write(&[PrePacket::NoResolve as u8])?;
-            stream.flush()?;
+            client.write_noresolve()?;
             return Err(ModuleError::Lua(e));
         }
     }

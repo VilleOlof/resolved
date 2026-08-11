@@ -1,12 +1,15 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::Arc,
+};
 
-use reqwest::{Client, Url};
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 
 use crate::{
-    Error, ItemRef, ScriptResponse,
-    script::{
+    Error, ItemRef, Script, ScriptResponse,
+    script_handler::{
         LUA_MODULE, MODULE_NAME, dll_script, handle_module_request, spawn_script_server,
         start_client_server,
     },
@@ -31,26 +34,15 @@ use crate::{
 ///
 /// ## Clone
 /// The internal connection to *DaVinci Resolve* is the same if you were to run `.clone()` on [`Resolve`].
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Resolve {
-    port: u16,
-    pub(crate) url: Url,
-    pub(crate) client: Client,
-    pub(crate) temp_dir: Arc<TempDir>,
+    // TODO: maybe add a unique id to every resolve instance so itemrefs can be caught earlier and properly error
+    // if the itemref was taken from another instance
+    pub(crate) host: Arc<SocketAddr>,
+    /// We just hold onto this so it doesnt run its Drop function and remove the files until Resolve is dropped
+    pub(crate) _temp_dir: Arc<TempDir>,
+    id: u64,
 }
-
-impl Debug for Resolve {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Resolve")
-            .field("port", &self.port)
-            .field("url", &self.url.as_str())
-            .field("client", &())
-            .field("temp_dir", &self.temp_dir)
-            .finish()
-    }
-}
-
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 impl Resolve {
     /// Creates a new [`Resolve`] connection instance.  
@@ -61,106 +53,69 @@ impl Resolve {
     /// # Errors
     /// If the internal lua module fails to reach *DaVinci Resolve* or the creation of this instance fails
     pub async fn new() -> Result<Self, Error> {
-        let client = Client::builder().user_agent(APP_USER_AGENT).build()?;
-        let temp_dir = Arc::new(TempDir::new()?);
+        let temp_dir = TempDir::new()?;
 
         let port = start(&temp_dir).await?;
-        let url = Url::parse(&format!("http://127.0.0.1:{port}"))?;
+        let host = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
 
-        let s = Self {
-            port,
-            url,
-            client,
-            temp_dir,
-        };
-        Ok(s)
+        let id = fastrand::u64(..);
+
+        Ok(Self {
+            host: Arc::new(host),
+            _temp_dir: Arc::new(temp_dir),
+            id,
+        })
     }
 
-    /// Send and execute a piece of `lua` code to *DaVinci Resolve*.  
-    ///
-    /// This code has full context to it's Scripting API.  
-    ///
-    /// ## Lua globals
-    /// `self` and `resolve` both point to the global `Resolve()` instance to DaVinci Resolve's Scripting API root.\
-    /// ```lua
-    /// self:Quit()
-    /// -- or
-    /// resolve:Quit()
-    /// -- both calls the same thing
-    /// ```
-    /// This is so you don't have to call `Resolve()` every time yourself, since it can never be invalid and never change.
-    ///
-    /// ## Example
-    ///
-    /// #### Lua Script
-    /// ```lua
-    /// local pm = self:GetProjectManager()
-    /// local p = pm:GetCurrentProject()
-    /// local t = p:GetCurrentTimeline()
-    /// return t:GetName()
-    /// ```
-    ///
-    /// #### Rust Code
-    /// ```ignore
-    /// let script = "<code above>";
-    /// let resolve = Resolve::new().await?;
-    /// let timeline_name = resolve.execute::<String>(script).await?;
-    /// ```
-    ///
-    /// # Errors
-    /// If the *lua code* fails for some reason it will be returned here
-    pub async fn execute<T>(&self, lua_script: impl Into<String>) -> Result<T, Error>
+    #[inline]
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
         T: DeserializeOwned,
     {
-        match self.send_execute(lua_script.into()).await? {
+        match self.send_execute(script.into()).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::Ok {
                 value,
                 eval_time: _,
             } => Ok(value),
+        }
+    }
+
+    pub async fn store(&self, script: impl Into<Script<'_>>) -> Result<ItemRef, Error> {
+        match self.send_store(script.into()).await? {
+            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::Ok {
+                value,
+                eval_time: _,
+            } => Ok(ItemRef::new(self.clone(), value)),
         }
     }
 
     pub(crate) async fn execute_with<T>(
         &self,
         item: &ItemRef,
-        lua_script: impl Into<String>,
+        script: impl Into<Script<'_>>,
     ) -> Result<T, Error>
     where
         T: DeserializeOwned,
     {
-        match self.send_execute_with(item.id(), lua_script.into()).await? {
-            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
-            ScriptResponse::Ok {
-                value,
-                eval_time: _,
-            } => Ok(value),
-        }
-    }
-
-    pub async fn store(&self, lua_script: impl Into<String>) -> Result<ItemRef, Error> {
-        match self.send_store(lua_script.into()).await? {
-            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
-            ScriptResponse::Ok {
-                value,
-                eval_time: _,
-            } => Ok(ItemRef::new(self.clone(), value)),
-        }
+        let mut script = script.into();
+        script = script.with(item)?;
+        self.execute(script).await
     }
 
     pub(crate) async fn store_with(
         &self,
         item: &ItemRef,
-        lua_script: impl Into<String>,
+        script: impl Into<Script<'_>>,
     ) -> Result<ItemRef, Error> {
-        match self.send_store_with(item.id(), lua_script.into()).await? {
-            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
-            ScriptResponse::Ok {
-                value,
-                eval_time: _,
-            } => Ok(ItemRef::new(self.clone(), value)),
-        }
+        let mut script = script.into();
+        script = script.with(item)?;
+        self.store(script).await
     }
 }
 

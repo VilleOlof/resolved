@@ -1,0 +1,1 @@
+TODO: explain roughly how packets work, how the lua module work and how an execute is ran

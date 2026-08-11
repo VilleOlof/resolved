@@ -34,12 +34,8 @@ pub enum MsgPacket {
     /// Client sends a piece of lua code to execute and instead of sending back the value,
     /// The module will store the value in the lua registry and return back a unique id to that value
     Store = 1,
-    StoreWith = 2,
-    /// Client sends a piece of code and an item reference id so `self` becomes that registry value.  
-    /// And the value returned will be sent back to the client.
-    ExecuteWith = 3,
     /// A reference to a registry item was dropped on the client so it needs to be removed in the module
-    DropItem = 4,
+    DropItem = 2,
 }
 
 impl MsgPacket {
@@ -47,9 +43,28 @@ impl MsgPacket {
         Some(match b {
             0 => Self::Execute,
             1 => Self::Store,
-            2 => Self::StoreWith,
-            3 => Self::ExecuteWith,
-            4 => Self::DropItem,
+            2 => Self::DropItem,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum ArgType {
+    Arg = 0,
+    ArgRef = 1,
+    NamedArg = 2,
+    NamedArgRef = 3,
+}
+
+impl ArgType {
+    pub fn from_u8(b: u8) -> Option<Self> {
+        Some(match b {
+            0 => Self::Arg,
+            1 => Self::ArgRef,
+            2 => Self::NamedArg,
+            3 => Self::NamedArgRef,
             _ => return None,
         })
     }
