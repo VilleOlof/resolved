@@ -1,5 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -20,6 +21,8 @@ use crate::{
     request::{Request, serialize_err},
 };
 
+type SharedClient = Arc<Mutex<Client>>;
+
 #[mlua::lua_module]
 fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
     let exports = lua.create_table()?;
@@ -27,12 +30,12 @@ fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
     Ok(exports)
 }
 
-fn start(lua: &Lua, port: u16) -> LuaResult<()> {
-    let mut client = Client::new(port).unwrap();
-    match _start(lua, &mut client) {
+fn start(lua: &Lua, (port, timeout_ms): (u16, u64)) -> LuaResult<()> {
+    let client = Arc::new(Mutex::new(Client::new(port).unwrap()));
+    match _start(lua, client.clone(), timeout_ms) {
         Ok(unit) => Ok(unit),
         Err(e) => {
-            client.write_err(e.to_string()).unwrap();
+            client.lock().unwrap().write_err(e.to_string()).unwrap();
             match e {
                 ModuleError::Lua(l) => Err(l),
                 other => Err(LuaError::external(other)),
@@ -41,10 +44,26 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
     }
 }
 
-fn _start(lua: &Lua, client: &mut Client) -> Result<(), ModuleError> {
-    let globals_ref = lua.globals().clone();
-    let resolve = resolve(lua, client)?;
+/// Creates a deep clone of the table instead of just the handle
+fn clone_table(lua: &Lua, t: &LuaTable) -> Result<LuaTable, ModuleError> {
+    let r = lua.create_table()?;
+    for v in t.pairs::<LuaValue, LuaValue>() {
+        let (k, v) = v?;
+        r.set(k, v)?;
+    }
+    Ok(r)
+}
+
+fn sleep(_: &Lua, millis: u64) -> LuaResult<()> {
+    std::thread::sleep(Duration::from_millis(millis));
+    Ok(())
+}
+
+fn _start(lua: &Lua, client: SharedClient, timeout_ms: u64) -> Result<(), ModuleError> {
+    let globals_ref = lua.globals();
+    let resolve = resolve(lua, client.clone())?;
     globals_ref.set("resolve", &resolve)?;
+    globals_ref.set("sleep", lua.create_function(sleep)?)?;
 
     lua.set_globals(globals_ref.clone())?;
 
@@ -52,13 +71,17 @@ fn _start(lua: &Lua, client: &mut Client) -> Result<(), ModuleError> {
     let server = TcpListener::bind(host)?;
 
     let module_port = server.local_addr()?.port();
-    client.write_port(module_port)?;
+    {
+        client.lock().unwrap().write_port(module_port)?;
+    }
+
+    ping_requester(client.clone(), timeout_ms);
 
     let mut item_ref_handler = ItemRefHandler::new(lua);
 
     for stream in server.incoming() {
         let mut request = Request::new(stream?);
-        lua.set_globals(globals_ref.clone())?;
+        lua.set_globals(clone_table(lua, &globals_ref)?)?;
 
         let res = match handle_req(lua, &mut item_ref_handler, &resolve, &mut request) {
             Err(e) => serialize_err(e.to_string()).expect("Failed to serialize err string"),
@@ -71,11 +94,37 @@ fn _start(lua: &Lua, client: &mut Client) -> Result<(), ModuleError> {
     Ok(())
 }
 
-fn resolve(lua: &Lua, client: &mut Client) -> Result<LuaAnyUserData, ModuleError> {
+/// If the client doesn't recieve back a `Pong` within 3 seconds, it is assumed to have died and we should also exit
+fn ping_requester(client: SharedClient, timeout_ms: u64) {
+    use std::{
+        process::exit,
+        thread::{sleep, spawn},
+    };
+    let interval = Duration::from_millis(timeout_ms);
+    spawn(move || {
+        {
+            client.lock().unwrap().set_read_timeout(interval);
+        }
+        loop {
+            sleep(interval);
+            {
+                let mut c = client.lock().unwrap();
+                if let Err(_e) = c.write_ping() {
+                    exit(0);
+                }
+                if let Err(_e) = c.read_pong() {
+                    exit(0);
+                }
+            }
+        }
+    });
+}
+
+fn resolve(lua: &Lua, client: SharedClient) -> Result<LuaAnyUserData, ModuleError> {
     match lua.load("return Resolve()").eval() {
         Ok(r) => Ok(r),
         Err(e) => {
-            client.write_noresolve()?;
+            client.lock().unwrap().write_noresolve()?;
             return Err(ModuleError::Lua(e));
         }
     }

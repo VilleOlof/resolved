@@ -37,5 +37,6 @@ pub fn handle_req(
             item_ref_handler.remove(id)?;
             Ok(Vec::new())
         }
+        MsgPacket::Shutdown => std::process::exit(1),
     };
 }

@@ -12,7 +12,7 @@ Execute `Lua` code with *DaVinci Resolve Studio's* **Scripting API** in `Rust`
 
 > [!NOTE]  
 > This crate only works with *DaVinci Resolve* ***Studio***, aka the paid version.  
-> This will not work ever in the *free* version and theres nothing i can do.
+> This will not work ever in the *free* version, and there's nothing I can do.
 
 *DaVinci Resolve* exposes a **Scripting API** via `Lua` or `Python`, but this crate only supports `Lua`.  
 From `Rust` you can send a piece of `Lua` code to *DaVinci Resolve* and get the resulting value back in `Rust`.
@@ -140,7 +140,7 @@ Well, the value returned from the code executed from `.store`, is stored in the 
 And you get an `id` which can be used to retrieve this value later on in another execution.  
 
 This struct that you get is an `ItemRef`, you can call both `.execute` and `.store` on this, just as on `Resolve`.  
-Any execution on an `ItemRef`, will change the global varialbe `self` to the stored value it references.  
+Any execution on an `ItemRef`, will change the global variable `self` to the stored value it references.  
 
 Normally, `GetProjectManager` returns an instance to well the *project manager*,  
 which is a value we can't serialize and send back to `Rust` normally.  
@@ -162,13 +162,11 @@ async fn main() -> ResolveResult<()> {
 
 See how we use `self` in both, when we run `.execute` on `Resolve`, it is the global *resolve* instance.  
 Then when execute with our `ItemRef` which holds a reference to our *project manager*,  
-it changes `self` to that insance so we can use it. Basically, `self` is your active execution instance.
+it changes `self` to that instance so we can use it. Basically, `self` is your active execution instance.
 
 When a `ItemRef` is dropped, it will send a message to the lua context and garbage collect the stored value.
 
 ### Script
-
-TODO: argument, building scripts
 
 We can execute code and store references,  
 but what if we want to include our `Rust` variables as arguments to a piece of lua code?  
@@ -254,7 +252,7 @@ By default, this path is:
 Which the library will attempt to use.  
 
 But if your installation is on any different path for any reason,  
-you can set the enviromental variable `FUSCRIPT` to the path to the `fuscript.exe` in your installation.
+you can set the environment variable `FUSCRIPT` to the path to the `fuscript.exe` in your installation.
 
 ## Why Windows Only?
 
@@ -270,3 +268,38 @@ And because of confusing dependency and build script problems, this `lua_module.
 I personally don't own a desktop Apple device *(DaVinci Resolve on linux doesn't even support this type of Scripting API)* so it's very difficult for me to make this library work on that platform.
 
 This crate has only been tested on `Windows 11 25H2 x64`
+
+## Tests
+
+To easier run and execute tests without having *DaVinci Resolve Studio* open,  
+there is a `fudummy` binary which replicates the behavior of the real `fuscript.exe` binary.  
+
+This dummy binary will take in the same arguments and execute the script without the **Scripting API**.  
+But this is enough to test networking, packets, registries, references, serializing and more core functionality.  
+
+### Running Dummy Tests
+
+There is a `run_tests_with_dummy.ps1` script which automates some of the process of running dummy tests.  
+This expects the artifacts of `./compile_module.ps1` to exist in `/prebuilt`.
+
+The script does the following:  
+- Builds `fudummy`
+- Adds the default DaVinci Resolve installation path to `$Path`  
+    *This is so `fudummy` can find the correctly named lua `.dll` (`lua5.1.dll`)*  
+- Sets environment variable `FUSCRIPT` to the built `fudummy` binary  
+- Runs all tests labeled `dummy` with the `test-dummy` feature enabled
+
+If your *DaVinci Resolve* installation is not in the default path or you something you can do all of this manually.  
+`fudummy` just needs access to a dll named `lua5.1.dll` so it can run and replicate `fuscript`'s behavior.  
+Then for the actual tests it needs `FUSCRIPT` to be pointing at the `fudummy` binary for it to be used instead.
+
+This `lua5.1.dll` can also be a `lua51.dll` but renamed to `lua5.1.dll` if you don't have *DaVinci Resolve* installed
+
+### Running Crate Tests
+
+To run crate tests that don't ever need some kind of `Resolve` instance,  
+you can run the normal test command but skip any *dummy* tests.
+
+```bash
+cargo test -- --skip dummy
+```

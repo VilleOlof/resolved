@@ -1,0 +1,8 @@
+[package]
+name = "fudummy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mlua = { workspace = true, features = ["lua51"] }

@@ -7,10 +7,11 @@ use std::{
 
 use resolved_shared::PrePacket;
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     process::Command,
     select,
+    task::JoinHandle,
 };
 
 use crate::Error;
@@ -35,7 +36,7 @@ pub(crate) fn dll_script(path: &Path) -> LuaCode {
     format!(
         r#"
 package.cpath = package.cpath .. [[;{}/?.dll]]
-require("{}").start(arg[1])"#,
+require("{}").start(arg[1], arg[2])"#,
         path.to_string_lossy(),
         MODULE_NAME
     )
@@ -58,17 +59,24 @@ pub(crate) async fn start_client_server() -> Result<(TcpListener, u16), Error> {
     Ok((listener, port))
 }
 
-pub(crate) async fn spawn_script_server(script_path: &Path, port: u16) -> Result<(), Error> {
+pub(crate) async fn spawn_script_server(
+    script_path: &Path,
+    port: u16,
+    timeout_ms: u64,
+) -> Result<(), Error> {
     let fuscript = fuscript()?;
     let script_path = script_path.display().to_string();
     let port = port.to_string();
+    let timeout_ms = timeout_ms.to_string();
     tokio::spawn(async move {
-        Command::new(fuscript)
+        if let Err(e) = Command::new(fuscript)
             .arg("-q")
-            .args([script_path, port])
+            .args([script_path, port, timeout_ms])
             .stdout(Stdio::piped())
             .spawn()
-            .unwrap();
+        {
+            eprintln!("{e:?}");
+        }
     })
     .await?;
 
@@ -96,8 +104,31 @@ pub(crate) async fn handle_module_request(stream: &mut TcpStream) -> Result<u16,
             match packet_type {
                 PrePacket::Ready => Ok(stream.read_u16().await?),
                 PrePacket::NoResolve => Err(Error::UnableToReachDavinciResolve),
-                PrePacket::Error => Err(read_err(stream).await?)
+                PrePacket::Error => Err(read_err(stream).await?),
+                _ => unreachable!("ping/pong requests can't be sent yet")
             }
         }
     }
+}
+
+pub(crate) async fn start_ping_responder(mut stream: TcpStream) -> JoinHandle<()> {
+    async fn respond(stream: &mut TcpStream) {
+        let packet_type =
+            PrePacket::from_u8(stream.read_u8().await.unwrap()).expect("invalid prepacket type");
+        if packet_type != PrePacket::Ping {
+            panic!("unexpected packet type while ping pong");
+        }
+        stream
+            .write_u8(PrePacket::Pong as u8)
+            .await
+            .expect("failed to write Pong byte");
+        stream.flush().await.expect("failed to flush pong packet");
+    }
+
+    tokio::spawn(async move {
+        loop {
+            respond(&mut stream).await;
+            println!("responded");
+        }
+    })
 }

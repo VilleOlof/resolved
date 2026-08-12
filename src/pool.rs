@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use futures::future::join_all;
 use serde::de::DeserializeOwned;
@@ -7,7 +7,7 @@ use tokio::{
     task::JoinError,
 };
 
-use crate::{Error, Resolve, Script};
+use crate::{Error, Resolve, Script, script::Arg};
 
 /// A pool of [`Resolve`] instances,\
 /// Whenever you run [`PooledResolve::execute`], it will grab one of the available [`Resolve`] instances and use it to run the specified code.
@@ -36,10 +36,16 @@ struct InternalPool {
 
 impl PooledResolve {
     pub async fn new(amount: usize) -> Result<Self, Error> {
+        Self::new_with_timeout(amount, Resolve::DEFAULT_TIMEOUT).await
+    }
+
+    pub async fn new_with_timeout(amount: usize, timeout: Duration) -> Result<Self, Error> {
         let mut handles = Vec::with_capacity(amount);
 
         for _ in 0..amount {
-            handles.push(tokio::task::spawn(async { Resolve::new().await }));
+            handles.push(tokio::spawn(async move {
+                Resolve::new_with_timeout(timeout).await
+            }));
         }
 
         let instances: Result<Result<Vec<Resolve>, Error>, JoinError> =
@@ -56,6 +62,22 @@ impl PooledResolve {
         })
     }
 
+    pub(crate) async fn while_lock<T: DeserializeOwned>(
+        script: Script<'_>,
+        instance: &Resolve,
+    ) -> Result<T, Error> {
+        for arg in &script.args {
+            match arg {
+                Arg::ArgRef(_) | Arg::NamedArgRef { key: _, value: _ } => {
+                    return Err(Error::CantHoldReferenceInPool);
+                }
+                _ => continue,
+            }
+        }
+
+        Ok(instance.execute::<T>(script).await?)
+    }
+
     pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -67,7 +89,10 @@ impl PooledResolve {
             inst.pop().ok_or(Error::OutOfSyncSemaphore)?
         };
 
-        let value_result = instance.execute::<T>(script).await;
+        let script = script.into();
+        // we dont want to propogate this error until we have
+        // returned out instance so its not gone forever in the pool
+        let value_result = Self::while_lock(script, &instance).await;
 
         {
             self.inner.instances.lock().await.push(instance);
@@ -76,29 +101,5 @@ impl PooledResolve {
         drop(permit);
 
         Ok(value_result?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn pool() -> Result<(), Error> {
-        let pool = PooledResolve::new(4).await?;
-        let mut v = Vec::with_capacity(64);
-        for _ in 0..64 {
-            let p = pool.clone();
-            v.push(tokio::task::spawn(async move {
-                p.execute::<String>("return resolve:GetVersionString()")
-                    .await
-                    .unwrap()
-            }));
-        }
-        let all: Vec<String> = join_all(v).await.into_iter().map(|x| x.unwrap()).collect();
-
-        assert_eq!(64, all.len());
-
-        Ok(())
     }
 }

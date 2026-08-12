@@ -8,11 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-mlua = { version = "0.12", features = [
-    "lua51",
-    "module",
-    "serde",
-], default-features = false }
+mlua = { workspace = true, features = ["lua51", "module", "serde"] }
 resolved_shared = { workspace = true }
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }

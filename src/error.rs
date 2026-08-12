@@ -20,6 +20,10 @@ pub enum Error {
         "Tried to use an ItemRef on a foreign Resolve instance whose id didn't match: {0} != {1}"
     )]
     MismatchedItemRef(u64, u64),
+    #[error(
+        "Can't have ItemRef's has arguments when executing with a PooledResolve. This is since it doesn't implement '.store', thus no references can derive from it"
+    )]
+    CantHoldReferenceInPool,
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

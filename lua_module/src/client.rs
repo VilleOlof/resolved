@@ -1,6 +1,7 @@
 use std::{
-    io::Write,
+    io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
+    time::Duration,
 };
 
 use resolved_shared::PrePacket;
@@ -35,5 +36,30 @@ impl Client {
         self.0.write(&[PrePacket::NoResolve as u8])?;
         self.0.flush()?;
         Ok(())
+    }
+
+    pub fn write_ping(&mut self) -> std::io::Result<()> {
+        self.0.write(&[PrePacket::Ping as u8])?;
+        self.0.flush()?;
+        Ok(())
+    }
+
+    pub fn read_pong(&mut self) -> std::io::Result<()> {
+        let mut buf = [0u8; 1];
+        self.0.read_exact(&mut buf)?;
+        let packet_type = PrePacket::from_u8(buf[0]).unwrap();
+        if packet_type != PrePacket::Pong {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Not a pong packet".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn set_read_timeout(&mut self, time: Duration) {
+        self.0
+            .set_read_timeout(Some(time))
+            .expect("failed to set read_timeout");
     }
 }

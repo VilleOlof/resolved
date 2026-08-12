@@ -4,7 +4,7 @@ use bytes::{BufMut, BytesMut};
 use resolved_shared::ArgType;
 use serde::Serialize;
 
-use crate::{Error, ItemRef};
+use crate::{Error, ItemRef, owned_script::OwnedScript};
 
 /// A piece of lua code with optional arguments.
 ///
@@ -48,12 +48,12 @@ use crate::{Error, ItemRef};
 /// let value: i32 = resolve.execute(script).await?;
 /// assert_eq!(20, value);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Script<'c> {
     /// The code to be loaded and executed in the lua module
-    lua: Cow<'c, str>,
+    pub(crate) lua: Cow<'c, str>,
     /// List of all arguments to be sent with the code, can be any of the 4 different ones.  
-    args: Vec<Arg<'c>>,
+    pub(crate) args: Vec<Arg<'c>>,
     /// An optional [`ItemRef`] which `self` will be set to if specified.\
     /// Can only be set by [`execute_with`](crate::Resolve::execute_with)/[`store_with`](crate::Resolve::store_with) functions on [`Resolve`](crate::Resolve)
     pub(crate) with: Option<&'c ItemRef>,
@@ -63,11 +63,11 @@ pub struct Script<'c> {
 ///
 /// `Arg` / `ArgRef` are pushed to the global `arg` variable.\
 /// `NamedArg` / `NamedArgRef` are added as global variables
-#[derive(Debug, Clone)]
-enum Arg<'s> {
-    Arg(Vec<u8>),
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Arg<'s> {
+    Arg(Cow<'s, [u8]>),
     ArgRef(&'s ItemRef),
-    NamedArg { key: &'s str, value: Vec<u8> },
+    NamedArg { key: &'s str, value: Cow<'s, [u8]> },
     NamedArgRef { key: &'s str, value: &'s ItemRef },
 }
 
@@ -95,19 +95,24 @@ impl<'c> Script<'c> {
         }
     }
 
-    /// This is the only validation we need to do with internal Resolve instance IDs and to make sure they are the same.  
-    /// Since execute_with and those are internal and the only way to use those is via Script and .with
-    /// We only need to validate those functions who take an ItemRef as an argumen in Script
-    pub(crate) fn validate_item_ref_id(&self, item_ref: &'c ItemRef) -> Result<(), Error> {
-        if let Some(with) = self.with {
-            let a = with.resolve().id();
-            let b = item_ref.resolve().id();
+    /// If we add a `with` [`ItemRef`], we need to validate that no previous pushed arguments have mismatched resolve ids
+    ///
+    /// We dont need to check ids when we push arguments since .with is internal to the crate,
+    /// and .with can only be written to after the consumer has given away ownership of the script object,
+    /// thus they cant push arguments after .with has been maybe written to. so we only need to check when adding .with
+    pub(crate) fn check_args(&self, item_ref: &'c ItemRef) -> Result<(), Error> {
+        let id = item_ref.resolve().id();
+        for arg in &self.args {
+            let arg_id = match arg {
+                Arg::ArgRef(r) => r.resolve().id(),
+                Arg::NamedArgRef { key: _, value } => value.resolve().id(),
+                _ => continue,
+            };
 
-            if a != b {
-                return Err(Error::MismatchedItemRef(a, b));
+            if id != arg_id {
+                return Err(Error::MismatchedItemRef(id, arg_id));
             }
         }
-
         Ok(())
     }
 
@@ -115,7 +120,7 @@ impl<'c> Script<'c> {
     /// By only keeping with private to crate, consumer has to call execute and make non-with script objects on the ItemRef item
     /// which will call with for them so it ensures it has the correct itemref for its instance
     pub(crate) fn with(mut self, item_ref: &'c ItemRef) -> Result<Self, Error> {
-        self.validate_item_ref_id(item_ref)?;
+        self.check_args(item_ref)?;
 
         self.with = Some(item_ref);
         Ok(self)
@@ -123,15 +128,13 @@ impl<'c> Script<'c> {
 
     /// Pushes `value` to the global `arg` variable.
     pub fn arg<S: Serialize>(mut self, value: S) -> Result<Self, Error> {
-        let arg = Arg::Arg(Self::ser(value)?);
+        let arg = Arg::Arg(Cow::Owned(Self::ser(value)?));
         self.args.push(arg);
         Ok(self)
     }
 
     /// Pushes an [`ItemRef`] to the global `arg` variable.
     pub fn arg_ref(mut self, item_ref: &'c ItemRef) -> Result<Self, Error> {
-        self.validate_item_ref_id(item_ref)?;
-
         let arg = Arg::ArgRef(item_ref);
         self.args.push(arg);
         Ok(self)
@@ -141,7 +144,7 @@ impl<'c> Script<'c> {
     pub fn named_arg<S: Serialize>(mut self, key: &'c str, value: S) -> Result<Self, Error> {
         let arg = Arg::NamedArg {
             key,
-            value: Self::ser(value)?,
+            value: Cow::Owned(Self::ser(value)?),
         };
         self.args.push(arg);
         Ok(self)
@@ -149,8 +152,6 @@ impl<'c> Script<'c> {
 
     /// Sets the global variable of `key` to an [`ItemRef`]
     pub fn named_arg_ref(mut self, key: &'c str, item_ref: &'c ItemRef) -> Result<Self, Error> {
-        self.validate_item_ref_id(item_ref)?;
-
         let arg = Arg::NamedArgRef {
             key,
             value: item_ref,
@@ -160,7 +161,7 @@ impl<'c> Script<'c> {
     }
 
     /// Serialize a value to a buffer
-    fn ser<S: Serialize>(value: S) -> Result<Vec<u8>, Error> {
+    pub(crate) fn ser<S: Serialize>(value: S) -> Result<Vec<u8>, Error> {
         Ok(rmp_serde::to_vec(&value)?)
     }
 
@@ -219,5 +220,54 @@ where
 {
     fn from(value: T) -> Self {
         Self::new(value.into())
+    }
+}
+
+impl<T> From<T> for OwnedScript
+where
+    T: Into<String>,
+{
+    fn from(value: T) -> Self {
+        Self::new(value.into())
+    }
+}
+
+impl<'c> From<&'c OwnedScript> for Script<'c> {
+    fn from(value: &'c OwnedScript) -> Self {
+        value.as_ref()
+    }
+}
+
+impl<'c> From<Script<'c>> for OwnedScript {
+    fn from(value: Script<'c>) -> Self {
+        value.as_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn new() -> Result<(), Error> {
+        let script = Script::new("return 1");
+
+        assert_eq!("return 1", script.lua);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn arg() -> Result<(), Error> {
+        let script = Script::new("return 1").arg(95)?;
+        assert_eq!(1, script.args.len());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn round_trip() {
+        let a_script = Script::new("");
+        let owned = a_script.as_owned();
+        let b_script = owned.as_ref();
+        assert_eq!(a_script, b_script);
     }
 }

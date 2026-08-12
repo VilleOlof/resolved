@@ -18,10 +18,21 @@ pub struct ItemRef {
     pub(crate) resolve: Option<Resolve>,
 }
 
+impl PartialEq<ItemRef> for ItemRef {
+    fn eq(&self, other: &ItemRef) -> bool {
+        // we need to check both ids, resolve partialeq already goes direct to id
+        self.id() == other.id() && self.resolve() == other.resolve()
+    }
+}
+
 impl ItemRef {
     /// Creates a new [`ItemRef`] with it's lua module `id` and the [`Resolve`] instance it was retrieved from.
+    ///
+    /// # Safety  
+    /// This is unsafe since if you were to mismatch the id and which [`Resolve`] instance it was gathered from then it would be undefined behavior.
+    /// Only ever use this if you know for a fact that the `id` you pass it derives from the same [`Resolve`] instance and hasn't already been dropped in the module.
     #[inline]
-    pub(crate) fn new(resolve: Resolve, id: u64) -> Self {
+    pub unsafe fn new(resolve: Resolve, id: u64) -> Self {
         Self {
             id,
             resolve: Some(resolve),
@@ -52,6 +63,25 @@ impl ItemRef {
     pub async fn store(&self, script: impl Into<Script<'_>>) -> Result<ItemRef, Error> {
         self.resolve().store_with(self, script).await
     }
+
+    pub(crate) fn sync_manual_drop(resolve: Resolve, id: u64) {
+        tokio::spawn(async move { unsafe { Self::manual_drop(resolve, id).await } });
+    }
+
+    /// Sends a packet to the lua module to drop the reference in the lua context.\
+    /// This can be used to ensure a reference is dropped before doing anything else.\
+    /// Aka, this is blocking if you `.await` it since the normal [`Drop`] can finish anytime it wants in the background.
+    ///
+    /// # Safety  
+    /// You must ensure that the `id` came from correct [`Resolve`] instance and that the value hasn't already been dropped
+    ///
+    /// # Error
+    /// This will silently fail and print its err to stderr if it fails.
+    pub async unsafe fn manual_drop(resolve: Resolve, id: u64) {
+        if let Err(e) = resolve.send_drop_item(id).await {
+            eprintln!("failed to drop item ref: {e:?}");
+        }
+    }
 }
 
 impl Drop for ItemRef {
@@ -59,10 +89,6 @@ impl Drop for ItemRef {
         let resolve =
             std::mem::replace(&mut self.resolve, None).expect("resolve must exist on drop");
         let id = self.id;
-        tokio::spawn(async move {
-            if let Err(e) = resolve.send_drop_item(id).await {
-                eprintln!("failed to drop item ref: {e:?}");
-            }
-        });
+        return ItemRef::sync_manual_drop(resolve, id);
     }
 }

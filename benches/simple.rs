@@ -1,75 +1,126 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use resolved::{PooledResolve, Resolve};
-use serde::de::DeserializeOwned;
-use std::hint::black_box;
+use futures::future::join_all;
+use resolved::{OwnedScript, PooledResolve, Resolve, Script};
+use std::{hint::black_box, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
-const SLEEP_SCRIPT: &str = r#"local clock = os.clock
-function sleep(n)
-    local t0 = clock()
-    while clock() - t0 <= n do
-    end
-end
+const NOOP: &str = "";
+const SLEEP: &str = "sleep(10)";
 
-sleep(0.1)
-"#;
-const VERSION_SCRIPT: &str = "return self:GetVersionString()";
-
-async fn single<T: DeserializeOwned>(amount: usize, script: &'static str) {
-    let resolve = Resolve::new().await.unwrap();
-
-    for _ in 0..amount {
-        let s = resolve.execute::<T>(script).await.unwrap();
-        black_box(s);
+async fn run_n<'s>(resolve: &Resolve, n: usize, script: impl Into<Script<'s>>) {
+    let script = script.into();
+    for _ in 0..n {
+        resolve.execute::<()>(script.clone()).await.unwrap();
     }
 }
 
-async fn pool<T: DeserializeOwned + Send + Sync>(amount: usize, pool: usize, script: &'static str) {
-    let resolve = PooledResolve::new(pool).await.unwrap();
-
-    let mut handles = Vec::with_capacity(amount);
-
-    for _ in 0..amount {
-        let r = resolve.clone();
-        handles.push(tokio::task::spawn(async move {
-            let s = r.execute::<T>(script).await.unwrap();
-            black_box(s);
+async fn pool_n<'c>(pool: &PooledResolve, n: usize, script: impl Into<OwnedScript>) {
+    let mut handles = Vec::with_capacity(n);
+    let script = Arc::new(script.into());
+    for _ in 0..n {
+        let p = pool.clone();
+        let script = script.clone();
+        handles.push(tokio::spawn(async move {
+            // TODO: this function someetimes, when it just fucking feels like it
+            // will panic with: called `Result::unwrap()` on an `Err` value: Io(Os { code: 10048, kind: AddrInUse, message: "Only one usage of each socket address (protocol/network address/port) is normally permitted." })
+            p.execute::<()>(script.as_ref()).await.unwrap();
         }));
     }
-
-    futures::future::join_all(handles).await;
+    join_all(handles).await;
 }
 
+// because of how async works and shit, when running this benchmark and the weird runtime / handle behavior
+// the background pong task never actually tuns in the Resolve instance
+// so we set a really high timeout to avoid the lua module from exiting early
+// while still cleaning it up incase the benchmark panics, it will still send a shutdown packet on drop
+const BENCHMARK_TIMEOUT: Duration = Duration::from_mins(5);
+
 fn criterion_benchmark(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .name("benchmark")
+        .build()
+        .unwrap();
 
-    let mut version = c.benchmark_group("version");
-    version.bench_function("single_1", |b| {
-        b.to_async(&rt).iter(|| single::<String>(1, VERSION_SCRIPT))
-    });
-    version.bench_function("pool_1", |b| {
-        b.to_async(&rt)
-            .iter(|| pool::<String>(1, 1, VERSION_SCRIPT))
-    });
-    version.bench_function("single_256", |b| {
-        b.to_async(&rt)
-            .iter(|| single::<String>(256, VERSION_SCRIPT))
-    });
-    version.bench_function("pool_256", |b| {
-        b.to_async(&rt)
-            .iter(|| pool::<String>(256, 2, VERSION_SCRIPT))
-    });
-    version.finish();
+    let resolve =
+        rt.block_on(async { Resolve::new_with_timeout(BENCHMARK_TIMEOUT).await.unwrap() });
+    // let pool_2 = rt.block_on(async {
+    //     PooledResolve::new_with_timeout(2, BENCHMARK_TIMEOUT)
+    //         .await
+    //         .unwrap()
+    // });
+    // let pool_8 = rt.block_on(async {
+    //     PooledResolve::new_with_timeout(8, BENCHMARK_TIMEOUT)
+    //         .await
+    //         .unwrap()
+    // });
 
-    let mut sleep = c.benchmark_group("sleep");
-    sleep.bench_function("single_sleep_16", |b| {
-        b.to_async(&rt).iter(|| single::<()>(16, SLEEP_SCRIPT))
+    let mut exec = c.benchmark_group("execute");
+    exec.bench_function("single_1", |b| {
+        b.to_async(&rt).iter(|| run_n(&resolve, 1, NOOP));
+    });
+    exec.bench_function("single_64", |b| {
+        b.to_async(&rt).iter(|| run_n(&resolve, 64, NOOP));
     });
 
-    sleep.bench_function("pool_sleep_16", |b| {
-        b.to_async(&rt).iter(|| pool::<()>(16, 4, SLEEP_SCRIPT))
+    // exec.bench_function("pool2_1", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 1, NOOP));
+    // });
+    // exec.bench_function("pool2_64", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 64, NOOP));
+    // });
+
+    // exec.bench_function("pool8_1", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 1, NOOP));
+    // });
+    // exec.bench_function("pool8_64", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 64, NOOP));
+    // });
+    exec.finish();
+
+    let mut work = c.benchmark_group("work");
+    work.bench_function("single_1", |b| {
+        b.to_async(&rt).iter(|| run_n(&resolve, 1, SLEEP));
     });
-    sleep.finish();
+    work.bench_function("single_64", |b| {
+        b.to_async(&rt).iter(|| run_n(&resolve, 64, SLEEP));
+    });
+
+    // work.bench_function("pool2_1", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 1, SLEEP));
+    // });
+    // work.bench_function("pool2_64", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 64, SLEEP));
+    // });
+
+    // work.bench_function("pool8_1", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 1, SLEEP));
+    // });
+    // work.bench_function("pool8_64", |b| {
+    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 64, SLEEP));
+    // });
+    work.finish();
+
+    let mut create = c.benchmark_group("create");
+    create.sample_size(20);
+
+    create.bench_function("resolve", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(Resolve::new().await.unwrap());
+        });
+    });
+
+    create.bench_function("pool1", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(PooledResolve::new(1).await.unwrap());
+        });
+    });
+    create.bench_function("pool4", |b| {
+        b.to_async(&rt).iter(|| async {
+            black_box(PooledResolve::new(4).await.unwrap());
+        });
+    });
+    create.finish();
 }
 
 criterion_group!(benches, criterion_benchmark);

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
 pub enum PrePacket {
     /// Sent by the module to tell the client that it's server is ready for connections.  
@@ -13,6 +13,8 @@ pub enum PrePacket {
     /// Sent by the module to tell the client that some error happened while setting up the module
     /// The error formatted as a string is sent back as the response.
     Error = 2,
+    Ping = 3,
+    Pong = 4,
 }
 
 impl PrePacket {
@@ -21,6 +23,8 @@ impl PrePacket {
             0 => Self::Ready,
             1 => Self::NoResolve,
             2 => Self::Error,
+            3 => Self::Ping,
+            4 => Self::Pong,
             _ => return None,
         })
     }
@@ -36,6 +40,8 @@ pub enum MsgPacket {
     Store = 1,
     /// A reference to a registry item was dropped on the client so it needs to be removed in the module
     DropItem = 2,
+    /// Explicitly tell the lua module to exit
+    Shutdown = 3,
 }
 
 impl MsgPacket {
@@ -44,6 +50,7 @@ impl MsgPacket {
             0 => Self::Execute,
             1 => Self::Store,
             2 => Self::DropItem,
+            3 => Self::Shutdown,
             _ => return None,
         })
     }
