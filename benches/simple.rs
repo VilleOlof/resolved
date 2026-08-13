@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use futures::future::join_all;
-use resolved::{OwnedScript, PooledResolve, Resolve, Script};
+use resolved::{OwnedScript, PooledResolve, Resolve, ResolveConfig, Script};
 use std::{hint::black_box, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
@@ -34,6 +34,12 @@ async fn pool_n<'c>(pool: &PooledResolve, n: usize, script: impl Into<OwnedScrip
 // so we set a really high timeout to avoid the lua module from exiting early
 // while still cleaning it up incase the benchmark panics, it will still send a shutdown packet on drop
 const BENCHMARK_TIMEOUT: Duration = Duration::from_mins(5);
+const BENCHMARK_CONFIG: ResolveConfig = ResolveConfig {
+    timeout: BENCHMARK_TIMEOUT,
+    // we dont really run any code, so for performance we dont reset globals
+    // this saves a toon of time in smaller tests
+    reset_globals: false,
+};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -42,18 +48,17 @@ fn criterion_benchmark(c: &mut Criterion) {
         .build()
         .unwrap();
 
-    let resolve =
-        rt.block_on(async { Resolve::new_with_timeout(BENCHMARK_TIMEOUT).await.unwrap() });
-    // let pool_2 = rt.block_on(async {
-    //     PooledResolve::new_with_timeout(2, BENCHMARK_TIMEOUT)
-    //         .await
-    //         .unwrap()
-    // });
-    // let pool_8 = rt.block_on(async {
-    //     PooledResolve::new_with_timeout(8, BENCHMARK_TIMEOUT)
-    //         .await
-    //         .unwrap()
-    // });
+    let resolve = rt.block_on(async { Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap() });
+    let pool_2 = rt.block_on(async {
+        PooledResolve::new_with_config(2, BENCHMARK_CONFIG)
+            .await
+            .unwrap()
+    });
+    let pool_8 = rt.block_on(async {
+        PooledResolve::new_with_config(8, BENCHMARK_CONFIG)
+            .await
+            .unwrap()
+    });
 
     let mut exec = c.benchmark_group("execute");
     exec.bench_function("single_1", |b| {

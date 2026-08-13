@@ -116,7 +116,7 @@ mod dummy {
         let resolve = Resolve::new().await?;
 
         let value: String = resolve
-            .execute(Script::new("return arg[1]").arg("Hi!")?)
+            .execute(Script::new("return arg[1]").arg(&"Hi!")?)
             .await?;
         assert_eq!("Hi!", value);
 
@@ -142,7 +142,7 @@ mod dummy {
         let resolve = Resolve::new().await?;
 
         let value: f64 = resolve
-            .execute(Script::new("return var").named_arg("var", 5.5)?)
+            .execute(Script::new("return var").named_arg("var", &5.5)?)
             .await?;
         assert_eq!(5.5, value);
 
@@ -170,7 +170,7 @@ mod dummy {
         let mut script = Script::new("return arg[55]");
 
         for i in 1..=100 {
-            script = script.arg(i)?;
+            script = script.arg(&i)?;
         }
 
         let value: i32 = resolve.execute(script).await?;
@@ -184,7 +184,7 @@ mod dummy {
         let resolve = Resolve::new().await?;
 
         let item = resolve
-            .store(Script::new("return self").named_arg("self", 5)?)
+            .store(Script::new("return self").named_arg("self", &5)?)
             .await?;
         // since self is never actually written it shouldnt be 5
         let value: bool = item.execute("return self ~= 5").await?;
@@ -255,4 +255,47 @@ mod dummy {
 
         Ok(())
     }
+}
+
+use resolved::prelude::*;
+use resolved::script;
+
+#[tokio::test]
+async fn mac() -> ResolveResult<()> {
+    let resolve = Resolve::new().await?;
+    // let to_run = script! {
+    //     self:GetVersionString()
+    // };
+
+    // let my_var = 5;
+    // let captured = script! {
+    //     return $my_var
+    // };
+
+    // let var = resolve.execute::<i32>(captured).await?;
+    // assert_eq!(my_var, var);
+    // println!("{var}");
+
+    let (a, b) = (5, 1);
+    let result: i32 = resolve.execute(script! { return $a + $b }).await?;
+    assert_eq!(6, result);
+
+    let p = resolve
+        .store(script! {
+            local pm = self:GetProjectManager()
+            local p = pm:GetCurrentProject()
+            return p
+        })
+        .await?;
+
+    let timeline = p
+        .store(script! { return self:GetCurrentTimeline() })
+        .await?;
+
+    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    p.execute::<bool>(script! { self:SetCurrentTimeline(#timeline) })
+        .await?;
+
+    Ok(())
 }

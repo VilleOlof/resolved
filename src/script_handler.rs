@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use resolved_shared::PrePacket;
+use resolved_shared::{PrePacket, ResolveConfig};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -32,13 +32,14 @@ type LuaCode = String;
 
 /// Generates a `.lua` script that sets the cpath to contain the specified `.dll` directory and starts the internal lua module.\
 /// `{path}/?.dll` so the directory that should contain it
-pub(crate) fn dll_script(path: &Path) -> LuaCode {
+pub(crate) fn dll_script(path: &Path, port: u16) -> LuaCode {
     format!(
         r#"
 package.cpath = package.cpath .. [[;{}/?.dll]]
-require("{}").start(arg[1], arg[2])"#,
+require("{}").start({})"#,
         path.to_string_lossy(),
-        MODULE_NAME
+        MODULE_NAME,
+        itoa::Buffer::new().format(port)
     )
 }
 
@@ -53,25 +54,21 @@ pub(crate) fn fuscript() -> Result<PathBuf, Error> {
     }
 }
 
+/// Starts the client > module server to communicate configurations and when the module is ready.
 pub(crate) async fn start_client_server() -> Result<(TcpListener, u16), Error> {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
     Ok((listener, port))
 }
 
-pub(crate) async fn spawn_script_server(
-    script_path: &Path,
-    port: u16,
-    timeout_ms: u64,
-) -> Result<(), Error> {
+/// Spawns the lua module using the scripting binary specified in [`fuscript`] and the script specified
+pub(crate) async fn spawn_script_server(script_path: &Path) -> Result<(), Error> {
     let fuscript = fuscript()?;
     let script_path = script_path.display().to_string();
-    let port = port.to_string();
-    let timeout_ms = timeout_ms.to_string();
     tokio::spawn(async move {
         if let Err(e) = Command::new(fuscript)
             .arg("-q")
-            .args([script_path, port, timeout_ms])
+            .args([script_path])
             .stdout(Stdio::piped())
             .spawn()
         {
@@ -83,7 +80,11 @@ pub(crate) async fn spawn_script_server(
     Ok(())
 }
 
-pub(crate) async fn handle_module_request(stream: &mut TcpStream) -> Result<u16, Error> {
+/// Handles the connection when starting up the lua module, writing the configuration and awaiting it's ready packet.
+pub(crate) async fn handle_module_request(
+    stream: &mut TcpStream,
+    config: &ResolveConfig,
+) -> Result<u16, Error> {
     async fn read_err(stream: &mut TcpStream) -> Result<Error, Error> {
         let len = stream.read_u32().await?;
         let mut s = vec![0; len as usize];
@@ -92,11 +93,23 @@ pub(crate) async fn handle_module_request(stream: &mut TcpStream) -> Result<u16,
         Ok(Error::LuaModuleErr(err))
     }
 
+    async fn write_config(stream: &mut TcpStream, config: &ResolveConfig) -> Result<(), Error> {
+        stream.write_u8(PrePacket::Configuration as u8).await?;
+        stream
+            .write_u32(u32::try_from(config.timeout.as_millis())?)
+            .await?;
+        stream.write_u8(u8::from(config.reset_globals)).await?;
+        stream.flush().await?;
+        Ok(())
+    }
+
+    write_config(stream, config).await?;
+
     let sleep = tokio::time::sleep(MODULE_TIMEOUT);
     tokio::pin!(sleep);
 
     select! {
-        _ = &mut sleep => {
+        () = &mut sleep => {
             Err(Error::ModuleTimeout)
         }
         p = stream.read_u8() => {
@@ -111,13 +124,15 @@ pub(crate) async fn handle_module_request(stream: &mut TcpStream) -> Result<u16,
     }
 }
 
+/// Starts the Ping/Pong background task responder
 pub(crate) async fn start_ping_responder(mut stream: TcpStream) -> JoinHandle<()> {
     async fn respond(stream: &mut TcpStream) {
         let packet_type =
             PrePacket::from_u8(stream.read_u8().await.unwrap()).expect("invalid prepacket type");
-        if packet_type != PrePacket::Ping {
-            panic!("unexpected packet type while ping pong");
-        }
+        assert!(
+            packet_type == PrePacket::Ping,
+            "unexpected packet type while ping pong"
+        );
         stream
             .write_u8(PrePacket::Pong as u8)
             .await
@@ -128,7 +143,6 @@ pub(crate) async fn start_ping_responder(mut stream: TcpStream) -> JoinHandle<()
     tokio::spawn(async move {
         loop {
             respond(&mut stream).await;
-            println!("responded");
         }
     })
 }

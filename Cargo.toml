@@ -1,10 +1,25 @@
 [package]
 name = "resolved"
+description = "Use DaVinci Resolve's Scripting API in Rust with Lua"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+readme = "readme.md"
+homepage = "https://github.com/VilleOlof/resolved"
+repository = "https://github.com/VilleOlof/resolved"
+authors = ["VilleOlof"]
+keywords = ["davinci-resolve", "scripting-api", "lua", "studio"]
+categories = ["api-bindings"]
+rust-version = "1.88.0"
 
 [workspace]
-members = ["lua_module", "build_lib", "resolved_shared", "fudummy"]
+members = [
+    "lua_module",
+    "build_lib",
+    "fudummy",
+    "resolved_shared",
+    "resolved_macros",
+]
 resolver = "3"
 
 [workspace.dependencies]
@@ -28,10 +43,19 @@ tokio = { version = "1.52", features = [
     "process",
     "io-util",
     "sync",
+    "time",
+    "rt",
 ] }
 futures = "0.3"
 tempfile = "3"
 fastrand = "2.5"
+itoa = "1"
+resolved_macros = { version = "0.1.0", path = "resolved_macros", optional = true }
+
+[features]
+default = ["pool", "macros"]
+macros = ["dep:resolved_macros"]
+pool = []
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio"] }

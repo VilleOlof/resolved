@@ -10,19 +10,12 @@ use crate::{Error, Resolve, Script};
 /// Can also be used as an argument to a [`Script`] with [`arg_ref`](Script::arg_ref) or [`named_arg_ref`](Script::named_arg_ref).
 #[derive(Debug, Clone)]
 pub struct ItemRef {
-    /// The rolling `id` used in the lua module to retrieve the RegistryKey with the referenced value.
+    /// The rolling `id` used in the lua module to retrieve the `RegistryKey` with the referenced value.
     pub(crate) id: u64,
     /// The [`Resolve`] instance which this [`ItemRef`] was taken from.\
     /// The [`Option`] here is nothing to worry about and only to easier impl [`Drop`].\
     /// [`Resolve`] can always be used during the lifetime of the [`ItemRef`] with [`resolve`](ItemRef::resolve).
     pub(crate) resolve: Option<Resolve>,
-}
-
-impl PartialEq<ItemRef> for ItemRef {
-    fn eq(&self, other: &ItemRef) -> bool {
-        // we need to check both ids, resolve partialeq already goes direct to id
-        self.id() == other.id() && self.resolve() == other.resolve()
-    }
 }
 
 impl ItemRef {
@@ -32,6 +25,7 @@ impl ItemRef {
     /// This is unsafe since if you were to mismatch the id and which [`Resolve`] instance it was gathered from then it would be undefined behavior.
     /// Only ever use this if you know for a fact that the `id` you pass it derives from the same [`Resolve`] instance and hasn't already been dropped in the module.
     #[inline]
+    #[must_use]
     pub unsafe fn new(resolve: Resolve, id: u64) -> Self {
         Self {
             id,
@@ -41,6 +35,7 @@ impl ItemRef {
 
     /// Returns the unique `id` for this reference
     #[inline]
+    #[must_use]
     pub fn id(&self) -> u64 {
         self.id
     }
@@ -53,17 +48,31 @@ impl ItemRef {
             .expect("resolve must exist before drop")
     }
 
-    pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
+    /// Execute some `lua` code, setting `self` to the stored reference value and returning what the code returned.
+    ///
+    /// Look at [`Resolve::execute`] for more info on how it works.  
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent
+    pub async fn execute<'c, T>(&'c self, script: impl Into<Script<'c>>) -> Result<T, Error>
     where
         T: DeserializeOwned,
     {
         self.resolve().execute_with(self, script).await
     }
 
-    pub async fn store(&self, script: impl Into<Script<'_>>) -> Result<ItemRef, Error> {
+    /// Store references to `Lua` values in `Rust`,
+    /// global variable `self` is set to the value stored in the [`ItemRef`].
+    ///
+    /// Look at [`Resolve::store`] for more info on how it works.  
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent
+    pub async fn store<'c>(&'c self, script: impl Into<Script<'c>>) -> Result<ItemRef, Error> {
         self.resolve().store_with(self, script).await
     }
 
+    /// Spawns a background task to drop the [`ItemRef`] in the module
     pub(crate) fn sync_manual_drop(resolve: Resolve, id: u64) {
         tokio::spawn(async move { unsafe { Self::manual_drop(resolve, id).await } });
     }
@@ -86,9 +95,23 @@ impl ItemRef {
 
 impl Drop for ItemRef {
     fn drop(&mut self) {
-        let resolve =
-            std::mem::replace(&mut self.resolve, None).expect("resolve must exist on drop");
-        let id = self.id;
-        return ItemRef::sync_manual_drop(resolve, id);
+        let resolve = std::mem::take(&mut self.resolve).expect("resolve must exist on drop");
+        ItemRef::sync_manual_drop(resolve, self.id);
+    }
+}
+
+impl std::hash::Hash for ItemRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.resolve().id().hash(state);
+    }
+}
+
+impl Eq for ItemRef {}
+
+impl PartialEq<ItemRef> for ItemRef {
+    fn eq(&self, other: &ItemRef) -> bool {
+        // we need to check both ids, resolve partialeq already goes direct to id
+        self.id() == other.id() && self.resolve() == other.resolve()
     }
 }

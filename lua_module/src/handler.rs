@@ -8,6 +8,7 @@ use crate::{
     request::{Payload, serialize_values},
 };
 
+/// global variable name for self instances
 pub(crate) const SELF: &str = "self";
 
 /// Handles a specific request

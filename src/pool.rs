@@ -1,15 +1,17 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use futures::future::join_all;
+use resolved_shared::ResolveConfig;
 use serde::de::DeserializeOwned;
 use tokio::{
     sync::{Mutex, Semaphore},
     task::JoinError,
 };
 
-use crate::{Error, Resolve, Script, script::Arg};
+use crate::{Error, Resolve, Script, script::ArgData};
 
-/// A pool of [`Resolve`] instances,\
+/// A pool of [`Resolve`] instances.  
+///
 /// Whenever you run [`PooledResolve::execute`], it will grab one of the available [`Resolve`] instances and use it to run the specified code.
 ///
 /// This helps to run multiple scripts at the same time without blocking since a single [`Resolve`] instance can only handle on script at a time.
@@ -28,6 +30,7 @@ pub struct PooledResolve {
     inner: Arc<InternalPool>,
 }
 
+/// Holds the internal data of the pool and all of the instances
 #[derive(Debug)]
 struct InternalPool {
     instances: Mutex<Vec<Resolve>>,
@@ -35,16 +38,26 @@ struct InternalPool {
 }
 
 impl PooledResolve {
+    /// Creates a new [`PooledResolve`] with `amount` instances in total.
+    ///
+    /// # Errors
+    /// If any of the instances fail to properly setup or the tasks fail to join
     pub async fn new(amount: usize) -> Result<Self, Error> {
-        Self::new_with_timeout(amount, Resolve::DEFAULT_TIMEOUT).await
+        Self::new_with_config(amount, ResolveConfig::DEFAULT).await
     }
 
-    pub async fn new_with_timeout(amount: usize, timeout: Duration) -> Result<Self, Error> {
+    /// Creates a new [`PooledResolve`] with `amount` instances in it, and a [`ResolveConfig`] that is passed to all instances.
+    ///
+    /// # Errors
+    /// If any of the instances fail to properly setup or the tasks fail to join
+    pub async fn new_with_config(amount: usize, config: ResolveConfig) -> Result<Self, Error> {
         let mut handles = Vec::with_capacity(amount);
 
+        let conf = Arc::new(config);
         for _ in 0..amount {
+            let config = conf.clone();
             handles.push(tokio::spawn(async move {
-                Resolve::new_with_timeout(timeout).await
+                Resolve::new_with_config(config.as_ref()).await
             }));
         }
 
@@ -62,22 +75,32 @@ impl PooledResolve {
         })
     }
 
+    /// Logic that runs when an instance has been grabbed from the pool
     pub(crate) async fn while_lock<T: DeserializeOwned>(
         script: Script<'_>,
         instance: &Resolve,
     ) -> Result<T, Error> {
         for arg in &script.args {
             match arg {
-                Arg::ArgRef(_) | Arg::NamedArgRef { key: _, value: _ } => {
+                ArgData::ArgRef(_) | ArgData::NamedArgRef { key: _, value: _ } => {
                     return Err(Error::CantHoldReferenceInPool);
                 }
-                _ => continue,
+                _ => (),
             }
         }
 
-        Ok(instance.execute::<T>(script).await?)
+        instance.execute::<T>(script).await
     }
 
+    /// Execute some `lua` code with any of the available instances, the returned value in the code will be returned here.
+    ///
+    /// Look at [`Resolve::execute`] for more info on how it works.  
+    ///
+    /// This `execute` will behave the same, but of course it's grabbing a [`Resolve`] instance from a pool of them.
+    /// When no instances are available and all are already taken, it will wait until theres one available to run.
+    ///
+    /// # Errors
+    /// If it fails to acquire a permit to an instance, or if instance [`execute`](Resolve::execute) fails
     pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -100,6 +123,6 @@ impl PooledResolve {
 
         drop(permit);
 
-        Ok(value_result?)
+        value_result
     }
 }

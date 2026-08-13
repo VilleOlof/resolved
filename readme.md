@@ -238,6 +238,56 @@ async fn main() -> ResolveResult<()> {
 
 In this example, we can both call with `self` and `media` which both holds instances to lua-only variables.
 
+#### Script Macro
+
+To easier construct scripts with arguments from `Rust`, you can use the `script!` macro for this.  
+This macro makes it easy to directly reference *Rust Variables* inside your `Lua` code.
+
+The above script examples can be written like:
+
+```rust ignore
+// script!
+use resolved::prelude::*;
+
+#[tokio::main]
+async fn main() -> ResolveResult<()> {
+    let resolve = Resolve::new().await?;
+
+    // Reference Rust variables with: `$`
+    let (a, b) = (5, 3);
+    let result: i32 = resolve.execute(script! {
+        return $a + $b
+    }).await?;
+    assert_eq!(8, result);
+
+    let media = resolve.store("return self:GetMediaStorage").await?;
+    // Reference ItemRef's with: `#`
+    let result: Vec<String> = resolve.execute(script! {
+        local current_page = self:GetCurrentPage()
+        return #media:GetFileList("/")
+    }).await?;
+
+    Ok(())
+}
+```
+
+We can just write any `Lua` code we want\* inside `Rust` and with our variables seamlessly.  
+Any value passed in using `$` must implement `Serialize`.  
+If you read how `Script` works normally with arguments,  
+you'd see why `ItemRef` has a special prefix for it.  
+*(It doesn't implement Serialize and needs to call it's own `named_arg_ref` function to pass it in)*
+
+Look at the `script!` docs for more information on this.
+
+## Features
+
+Both of the following features are **enabled by default**:
+
+- `macros`  
+    Enables `script!` macro to write *Lua* in *Rust* with references to variables.
+- `pool`  
+    Enables `PooledResolve` which can contain multiple instances to execute multiple things at the same time
+
 ## Scripting API Documentation
 
 The current **Scripting API** can be found [`here`](https://gist.github.com/X-Raym/2f2bf453fc481b9cca624d7ca0e19de8).  
@@ -253,6 +303,30 @@ Which the library will attempt to use.
 
 But if your installation is on any different path for any reason,  
 you can set the environment variable `FUSCRIPT` to the path to the `fuscript.exe` in your installation.
+
+## Benchmarks
+
+### `Resolve` instance
+Time to create a new `Resolve` instance that connects to DaVinci Resolve.  
+This also measures the startup time of the lua module.
+
+| Metric    | Time        |
+|-----------|-------------|
+| Mean      | `116.64 ms` |
+| Std. Dev. | `25.649 ms` |
+| Median    | `111.27 ms` |
+| MAD       | `15.759 ms` |
+
+### Script execution baseline
+This is time to execute an empty script.  
+This mostly measures the networking, serializing and request handling
+
+| Metric    | Time        |
+|-----------|-------------|
+| Mean      | `267.04 µs` |
+| Std. Dev. | `109.68 µs` |
+| Median    | `246.40 µs` |
+| MAD       | `102.29 µs` |
 
 ## Why Windows Only?
 
@@ -294,6 +368,14 @@ If your *DaVinci Resolve* installation is not in the default path or you somethi
 Then for the actual tests it needs `FUSCRIPT` to be pointing at the `fudummy` binary for it to be used instead.
 
 This `lua5.1.dll` can also be a `lua51.dll` but renamed to `lua5.1.dll` if you don't have *DaVinci Resolve* installed
+
+If the tests hang, panic or the `run_tests_with_dummy.ps1` script doesn't fully execute,  
+to reset your environment back to before:
+```bash
+$env:FUSCRIPT = $null
+# or your previous configured path
+```
+Then the crate will work again since it temporary replaces that env variable to use the dummy binary. 
 
 ### Running Crate Tests
 

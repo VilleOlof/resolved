@@ -682,12 +682,23 @@ dependencies = [
  "criterion",
  "fastrand",
  "futures",
+ "itoa",
+ "resolved_macros",
  "resolved_shared",
  "rmp-serde",
  "serde",
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "resolved_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

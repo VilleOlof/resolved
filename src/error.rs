@@ -1,5 +1,6 @@
 use crate::script_handler::MODULE_TIMEOUT;
 
+/// Any error that can occur while using `resolved`
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Lua module was unable to reach DaVinci Resolve. Are you sure it's open?")]
@@ -39,4 +40,6 @@ pub enum Error {
     Acquire(#[from] tokio::sync::AcquireError),
     #[error(transparent)]
     FromUtf8(#[from] std::string::FromUtf8Error),
+    #[error(transparent)]
+    TryFromInt(#[from] std::num::TryFromIntError),
 }

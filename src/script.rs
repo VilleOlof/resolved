@@ -12,21 +12,21 @@ use crate::{Error, ItemRef, owned_script::OwnedScript};
 /// For most scenarios, you can just use a [`str`]/[`String`] for the input argument to these methods.  
 ///
 /// But if you now wanted to execute some code with some variables or arguments from *Rust*,\
-/// you'll need to use the [`Script::new`] and it's builder functions.  
+/// you'll need to use the [`Script::new`] and it's builder functions *(or the [`script!`](resolved_macros::script) macro!)*.  
 ///
 /// There are four different types of arguments:  
 /// - **`Arg`**\
-///     Values added with [`arg`](Script::arg) will be pushed to the global `arg` table in the lua enviroment.  
+///   Values added with [`arg`](Script::arg) will be pushed to the global `arg` table in the lua enviroment.  
 /// - **`ArgRef`**\
-///     With the normal `Arg`, you can't specify an [`ItemRef`] and thus some previous stored variable data.\
-///     But with [`arg_ref`](Script::arg_ref), you can specify an [`ItemRef`] to push to the global `arg` table.\
-///     Note that this [`ItemRef`] must derive from the same [`Resolve`](crate::Resolve) instance.
+///   With the normal `Arg`, you can't specify an [`ItemRef`] and thus some previous stored variable data.\
+///   But with [`arg_ref`](Script::arg_ref), you can specify an [`ItemRef`] to push to the global `arg` table.\
+///   Note that this [`ItemRef`] must derive from the same [`Resolve`](crate::Resolve) instance.
 /// - **`NamedArg`**\
-///     Instead of pushing values to `arg`, this will simply put the value in specified global variable.\
-///     Using [`named_arg`](Script::named_arg) with a `key` and `value` argument will satisfy this.\
-///     Note that you can't name your variable `self`, as that is either assigned to `Resolve()` or the executed [`ItemRef`].
+///   Instead of pushing values to `arg`, this will simply put the value in specified global variable.\
+///   Using [`named_arg`](Script::named_arg) with a `key` and `value` argument will satisfy this.\
+///   Note that you can't name your variable `self`, as that is either assigned to `Resolve()` or the executed [`ItemRef`].
 /// - **`NamedArgRef`**\
-///     Behaves the same as `NamedArg` but with an [`ItemRef`] as the value instead, use [`named_arg_ref`](Script::named_arg_ref) for this.
+///   Behaves the same as `NamedArg` but with an [`ItemRef`] as the value instead, use [`named_arg_ref`](Script::named_arg_ref) for this.
 ///
 /// ## Examples
 ///
@@ -48,12 +48,12 @@ use crate::{Error, ItemRef, owned_script::OwnedScript};
 /// let value: i32 = resolve.execute(script).await?;
 /// assert_eq!(20, value);
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Script<'c> {
     /// The code to be loaded and executed in the lua module
     pub(crate) lua: Cow<'c, str>,
     /// List of all arguments to be sent with the code, can be any of the 4 different ones.  
-    pub(crate) args: Vec<Arg<'c>>,
+    pub(crate) args: Vec<ArgData<'c>>,
     /// An optional [`ItemRef`] which `self` will be set to if specified.\
     /// Can only be set by [`execute_with`](crate::Resolve::execute_with)/[`store_with`](crate::Resolve::store_with) functions on [`Resolve`](crate::Resolve)
     pub(crate) with: Option<&'c ItemRef>,
@@ -63,36 +63,53 @@ pub struct Script<'c> {
 ///
 /// `Arg` / `ArgRef` are pushed to the global `arg` variable.\
 /// `NamedArg` / `NamedArgRef` are added as global variables
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Arg<'s> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum ArgData<'s> {
     Arg(Cow<'s, [u8]>),
     ArgRef(&'s ItemRef),
     NamedArg { key: &'s str, value: Cow<'s, [u8]> },
     NamedArgRef { key: &'s str, value: &'s ItemRef },
 }
 
-impl Arg<'_> {
+impl ArgData<'_> {
+    /// Returns the general type of an argument, used to deserialize the data in the module
     pub const fn arg_type(&self) -> u8 {
         (match self {
-            Arg::Arg(_) => ArgType::Arg,
-            Arg::ArgRef(_) => ArgType::ArgRef,
-            Arg::NamedArg { key: _, value: _ } => ArgType::NamedArg,
-            Arg::NamedArgRef { key: _, value: _ } => ArgType::NamedArgRef,
+            ArgData::Arg(_) => ArgType::Arg,
+            ArgData::ArgRef(_) => ArgType::ArgRef,
+            ArgData::NamedArg { key: _, value: _ } => ArgType::NamedArg,
+            ArgData::NamedArgRef { key: _, value: _ } => ArgType::NamedArgRef,
         }) as u8
     }
 }
 
 impl<'c> Script<'c> {
     /// Create a new [`Script`] with no arguments specified.
+    #[inline]
     pub fn new<S>(lua_script: S) -> Self
+    where
+        S: Into<Cow<'c, str>>,
+    {
+        Self::new_with_capacity(lua_script, 0)
+    }
+
+    /// Creates a new [`Script`] with a set capacity to the internal arguments list
+    #[inline]
+    pub fn new_with_capacity<S>(lua_script: S, arg_cap: usize) -> Self
     where
         S: Into<Cow<'c, str>>,
     {
         Self {
             lua: lua_script.into(),
             with: None,
-            args: Vec::new(),
+            args: Vec::with_capacity(arg_cap),
         }
+    }
+
+    /// Returns an estimation on how many bytes the serialized variant of this [`Script`] will be
+    #[inline]
+    pub(crate) fn size_hint(&self) -> usize {
+        self.lua.len() + (8 * self.args.len())
     }
 
     /// If we add a `with` [`ItemRef`], we need to validate that no previous pushed arguments have mismatched resolve ids
@@ -104,8 +121,8 @@ impl<'c> Script<'c> {
         let id = item_ref.resolve().id();
         for arg in &self.args {
             let arg_id = match arg {
-                Arg::ArgRef(r) => r.resolve().id(),
-                Arg::NamedArgRef { key: _, value } => value.resolve().id(),
+                ArgData::ArgRef(r) => r.resolve().id(),
+                ArgData::NamedArgRef { key: _, value } => value.resolve().id(),
                 _ => continue,
             };
 
@@ -116,9 +133,9 @@ impl<'c> Script<'c> {
         Ok(())
     }
 
-    /// We dont want to expose this as it can cause item ref confusion between resolve instances.  
-    /// By only keeping with private to crate, consumer has to call execute and make non-with script objects on the ItemRef item
-    /// which will call with for them so it ensures it has the correct itemref for its instance
+    /// We dont want to expose this as it can cause item ref confusion between [`Resolve`](crate::Resolve) instances.
+    /// By only keeping with private to crate, consumer has to call execute and make non-with script objects on the [`ItemRef`] item
+    /// which will call with for them so it ensures it has the correct [`ItemRef`] for its instance
     pub(crate) fn with(mut self, item_ref: &'c ItemRef) -> Result<Self, Error> {
         self.check_args(item_ref)?;
 
@@ -127,22 +144,35 @@ impl<'c> Script<'c> {
     }
 
     /// Pushes `value` to the global `arg` variable.
-    pub fn arg<S: Serialize>(mut self, value: S) -> Result<Self, Error> {
-        let arg = Arg::Arg(Cow::Owned(Self::ser(value)?));
+    ///
+    /// # Errors
+    /// If it can't properly serialize `value`, this will fail
+    #[inline]
+    pub fn arg<S: Serialize>(mut self, value: &S) -> Result<Self, Error> {
+        let arg = ArgData::Arg(Cow::Owned(Self::ser(value)?));
         self.args.push(arg);
         Ok(self)
     }
 
     /// Pushes an [`ItemRef`] to the global `arg` variable.
+    ///
+    /// # Errors
+    /// Even tho this returns an error, this actually can't error\
+    /// *(this is for a standard arg API and for the macros to work easier)*
+    #[inline]
     pub fn arg_ref(mut self, item_ref: &'c ItemRef) -> Result<Self, Error> {
-        let arg = Arg::ArgRef(item_ref);
+        let arg = ArgData::ArgRef(item_ref);
         self.args.push(arg);
         Ok(self)
     }
 
     /// Sets the global variable of `key` to `value`
-    pub fn named_arg<S: Serialize>(mut self, key: &'c str, value: S) -> Result<Self, Error> {
-        let arg = Arg::NamedArg {
+    ///
+    /// # Errors
+    /// If it can't properly serialize `value`, this will fail
+    #[inline]
+    pub fn named_arg<S: Serialize>(mut self, key: &'c str, value: &S) -> Result<Self, Error> {
+        let arg = ArgData::NamedArg {
             key,
             value: Cow::Owned(Self::ser(value)?),
         };
@@ -151,8 +181,13 @@ impl<'c> Script<'c> {
     }
 
     /// Sets the global variable of `key` to an [`ItemRef`]
+    ///
+    /// # Errors
+    /// Even tho this returns an error, this actually can't error\
+    /// *(this is for a standard arg API and for the macros to work easier)*
+    #[inline]
     pub fn named_arg_ref(mut self, key: &'c str, item_ref: &'c ItemRef) -> Result<Self, Error> {
-        let arg = Arg::NamedArgRef {
+        let arg = ArgData::NamedArgRef {
             key,
             value: item_ref,
         };
@@ -161,8 +196,9 @@ impl<'c> Script<'c> {
     }
 
     /// Serialize a value to a buffer
-    pub(crate) fn ser<S: Serialize>(value: S) -> Result<Vec<u8>, Error> {
-        Ok(rmp_serde::to_vec(&value)?)
+    #[inline]
+    pub(crate) fn ser<S: Serialize>(value: &S) -> Result<Vec<u8>, Error> {
+        Ok(rmp_serde::to_vec(value)?)
     }
 
     /// Packs the [`Script`] into a serialized format.  
@@ -174,37 +210,38 @@ impl<'c> Script<'c> {
     ///
     /// where `arg_data` can be just a value, a u64 for a ref, a len-prefixed string+value or len-prefixed string+u64
     pub(crate) fn serialize(self) -> Result<Vec<u8>, Error> {
-        fn string(data: &mut BytesMut, str: &str) {
-            data.put_u32(str.len() as u32);
+        fn string(data: &mut BytesMut, str: &str) -> Result<(), Error> {
+            data.put_u32(u32::try_from(str.len())?);
             data.put(str.as_bytes());
+            Ok(())
         }
 
         let mut data = BytesMut::new();
 
-        data.put_u8(self.with.is_some() as u8);
+        data.put_u8(u8::from(self.with.is_some()));
         if let Some(item) = self.with {
             data.put_u64(item.id());
         }
 
-        string(&mut data, &self.lua);
-        data.put_u32(self.args.len() as u32);
+        string(&mut data, &self.lua)?;
+        data.put_u32(u32::try_from(self.args.len())?);
 
         for arg in self.args {
             data.put_u8(arg.arg_type());
 
             match arg {
-                Arg::Arg(arg) => {
-                    data.put_u32(arg.len() as u32);
+                ArgData::Arg(arg) => {
+                    data.put_u32(u32::try_from(arg.len())?);
                     data.put(&arg[..]);
                 }
-                Arg::ArgRef(arg) => data.put_u64(arg.id()),
-                Arg::NamedArg { key, value } => {
-                    string(&mut data, &key);
-                    data.put_u32(value.len() as u32);
+                ArgData::ArgRef(arg) => data.put_u64(arg.id()),
+                ArgData::NamedArg { key, value } => {
+                    string(&mut data, key)?;
+                    data.put_u32(u32::try_from(value.len())?);
                     data.put(&value[..]);
                 }
-                Arg::NamedArgRef { key, value } => {
-                    string(&mut data, &key);
+                ArgData::NamedArgRef { key, value } => {
+                    string(&mut data, key)?;
                     data.put_u64(value.id());
                 }
             }
@@ -244,6 +281,17 @@ impl<'c> From<Script<'c>> for OwnedScript {
     }
 }
 
+impl std::fmt::Display for Script<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.lua)
+    }
+}
+impl std::fmt::Display for OwnedScript {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.lua)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn arg() -> Result<(), Error> {
-        let script = Script::new("return 1").arg(95)?;
+        let script = Script::new("return 1").arg(&95)?;
         assert_eq!(1, script.args.len());
         Ok(())
     }

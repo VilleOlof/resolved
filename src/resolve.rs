@@ -2,10 +2,9 @@ use std::{
     fmt::Debug,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
-    time::Duration,
 };
 
-use resolved_shared::ScriptResponse;
+use resolved_shared::{ResolveConfig, ScriptResponse};
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 use tokio::{fs::write, task::JoinHandle};
@@ -18,58 +17,52 @@ use crate::{
     },
 };
 
-/// A connection to *DaVinci Resolve*.\
+/// A connection to *`DaVinci Resolve`*.
+///
 /// Used to run `lua` code with it's Scripting API available.
 ///
-/// ## Lua globals
-/// `self` and `resolve` both point to the global `Resolve()` instance to DaVinci Resolve's Scripting API root.\
-/// ```lua
-/// self:Quit()
-/// -- or
-/// resolve:Quit()
-/// -- both calls the same thing
-/// ```
-/// This is so you don't have to call `Resolve()` every time yourself, since it can never be invalid and never change.
+/// ## Globals
+/// `resolve` will always point to the value returned from `Resolve()`, which is the root of the **Scripting API** in *`DaVinci Resolve`*.\
+/// This is so you don't have to call it yourself everytime.
+///
+/// Depending on the context that a [`Script`] was executed from, `self` will be the current active instance.\
+/// When executing from [`Resolve`], `self` is the root, so `resolve`.\
+/// When executing from [`ItemRef`], `self` is the stored value, which can be anything.
 ///
 /// ## Single-Threaded  
 /// The script server that this spins up can only accept requests one at a time.\
 /// If you wish to send multiple scripts to execute at the same time, start a new [`Resolve`] instance and use that.
 ///
+/// Or you can use [`PooledResolve`](crate::PooledResolve) to start multiple instances at the same time
+/// and use any available on when executing. Look at it's doc for more info.
+///
 /// ## Clone
-/// The internal connection to *DaVinci Resolve* is the same if you were to run `.clone()` on [`Resolve`].
+/// The internal connection to *`DaVinci Resolve`* is the same if you were to run `.clone()` on [`Resolve`].\
+/// So [`Resolve`] can be cheaply cloned and passed around.
 #[derive(Debug, Clone)]
 pub struct Resolve {
-    // TODO: maybe add a unique id to every resolve instance so itemrefs can be caught earlier and properly error
-    // if the itemref was taken from another instance
-    pub(crate) host: Arc<ModuleAddr>,
-    /// We just hold onto this so it doesnt run its Drop function and remove the files until Resolve is dropped
-    pub(crate) _temp_dir: Arc<TempDir>,
+    /// All inner data for the instance, wrapped in Arc to be cheaply cloned and referenced,  
+    inner: Arc<InnerResolve>,
+}
+
+#[derive(Debug)]
+struct InnerResolve {
+    /// The unique id for this specific instance and connection to `DaVinci Resolve`
     id: u64,
+    /// The host to connect to the lua module linked to this instance
+    host: SocketAddr,
+    /// We just hold onto this so it doesnt run its Drop function and remove the files until Resolve is dropped
+    _temp_dir: TempDir,
     /// We need to store the handle to the background task that responds to pings from the lua module,
     /// so we can properly abort the task when this instance is dropped
-    _ping_responder: Arc<PingResponder>,
+    ping_responder: JoinHandle<()>,
 }
 
-// We need to wrap `host` and `ping_responder` since they are in an Arc
-// we cant just drop on Resolve itself since those references the inner Arc's still live on
-// But the fields can never leave the Resolve instance
-// but a clone of a resolve instance can get dropped
-// and then we dont want to drop anything, only when the inner arc'd values get dropped
-// so the last remaining resolve instance which still holds an arc ref
-// so we wrap them so we can impl Drop and properly send a shutdown signal and abort the pong task
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ModuleAddr(pub(crate) SocketAddr);
-impl Drop for ModuleAddr {
+// when the inner arc'd resolve instance is fully dropped then we can discard the module and bg tasks
+impl Drop for InnerResolve {
     fn drop(&mut self) {
-        let _ = Resolve::send_shutdown(&self.0);
-    }
-}
-#[derive(Debug)]
-pub(crate) struct PingResponder(pub(crate) JoinHandle<()>);
-impl Drop for PingResponder {
-    fn drop(&mut self) {
-        self.0.abort();
+        let _ = Resolve::send_shutdown(&self.host);
+        self.ping_responder.abort();
     }
 }
 
@@ -79,44 +72,104 @@ impl PartialEq<Resolve> for Resolve {
     }
 }
 
-impl Resolve {
-    pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
+impl std::hash::Hash for Resolve {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
 
+impl Resolve {
     /// Creates a new [`Resolve`] connection instance.  
     ///
     /// This creates a temporary directory with relevant script and dlls files.\
     /// Launches `fuscript` and starts a local script server that [`Resolve`] can use.
     ///
     /// # Errors
-    /// If the internal lua module fails to reach *DaVinci Resolve* or the creation of this instance fails
+    /// If the internal lua module fails to reach *`DaVinci Resolve`* or the creation of this instance fails
     pub async fn new() -> Result<Self, Error> {
-        Self::new_with_timeout(Self::DEFAULT_TIMEOUT).await
+        Self::new_with_config(&ResolveConfig::DEFAULT).await
     }
 
-    pub async fn new_with_timeout(timeout: Duration) -> Result<Self, Error> {
-        let timeout_ms = timeout.as_millis() as u64;
-
+    /// Creates a new [`Resolve`] instance with the specified [`ResolveConfig`].
+    ///
+    /// # Errors
+    /// - If it fails to create a temporary directory
+    /// - The setup server communication fails
+    /// - The module startup fails
+    pub async fn new_with_config(config: &ResolveConfig) -> Result<Self, Error> {
         let temp_dir = TempDir::new()?;
 
-        let (port, ping_responder) = start(&temp_dir, timeout_ms).await?;
+        let (port, ping_responder) = start(&temp_dir, config).await?;
         let host = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
 
         let id = fastrand::u64(..);
 
         Ok(Self {
-            host: Arc::new(ModuleAddr(host)),
-            _temp_dir: Arc::new(temp_dir),
-            id,
-            _ping_responder: Arc::new(PingResponder(ping_responder)),
+            inner: Arc::new(InnerResolve {
+                id,
+                host,
+                _temp_dir: temp_dir,
+                ping_responder,
+            }),
         })
     }
 
     /// Returns a unique `id` to this specific [`Resolve`] instance, can be used to check if two instances are the same or not.
     #[inline]
+    #[must_use]
     pub fn id(&self) -> u64 {
-        self.id
+        self.inner.id
     }
 
+    #[inline]
+    pub(crate) fn host(&self) -> SocketAddr {
+        self.inner.host
+    }
+
+    /// Execute some `lua` code, the returned value in the code will be returned here.  
+    ///
+    /// Using [`Script`] (or it's [`script!`](resolved_macros::script) macro) you can pass in arguments to your code.\
+    ///
+    /// ## Globals  
+    ///
+    /// Instead of calling `Resolve()` every time to reach for the **Scripting API**, you can use `resolve`.
+    /// `resolve` is always available in the global context no matter which `.execute` you run.  
+    ///
+    /// `self` on the other hand is special to your active instance.
+    /// If you run [`execute`](Resolve::execute) from [`Resolve`], `self` will also be the value of the `resolve` global.
+    /// But if you run [`execute`](ItemRef::execute) from an [`ItemRef`], that stored value will be `self`.
+    ///
+    /// `sleep(ms)` is also an available function.
+    ///
+    /// ## Examples
+    ///
+    /// ### Simple
+    /// ```rust ignore
+    /// let resolve = Resolve::new().await?;
+    /// let version = resolve.execute::<String>(r#"return self:GetVersionString()"#).await?;
+    /// assert!(!version.is_empty());
+    /// ```
+    ///
+    /// ### Arguments
+    /// ```rust ignore
+    /// let resolve = Resolve::new().await?;
+    /// let script = Script::new("return my_var + secret")
+    ///     .named_arg("my_var", 5)?
+    ///     .named_arg("secret", u8::MAX)?;
+    /// let result = resolve.execute::<i32>(script).await?;
+    /// assert_eq!(260, result);
+    /// ```
+    ///
+    /// ### On Reference
+    /// Look more at [`ItemRef`] and [`store`](Resolve::store) for more info on this.
+    /// ```rust ignore
+    /// let resolve = Resolve::new().await?;
+    /// let pm = resolve.store("return self:GetProjectManager()").await?;
+    /// pm.execute::<()>("self:SaveProject()").await?;
+    /// ```
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent
     pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -130,6 +183,26 @@ impl Resolve {
         }
     }
 
+    /// Store references to `Lua` values in `Rust`
+    ///
+    /// Instead of returning some value, you get an [`ItemRef`].
+    /// This is just an **id** that resolves to the stored value when executing.
+    ///
+    /// You can store any value as an [`ItemRef`], a number, a function, or even an instance of a *timeline*!
+    ///
+    /// And you can also can [`execute`](ItemRef::execute) and [`.store`](ItemRef::store) on the [`ItemRef`] itself.
+    /// in that case, the global variable `self` becomes the value of that [`ItemRef`]
+    ///
+    /// ## Example
+    /// ```rust ignore
+    /// let resolve = Resolve::new().await?;
+    /// let page: ItemRef = resolve.store("return self:GetCurrentPage()").await?;
+    ///
+    /// resolve.execute::<()>(Script::new("self:OpenPage(arg[1])").arg_ref(&page)?).await?;
+    /// ```
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent
     pub async fn store(&self, script: impl Into<Script<'_>>) -> Result<ItemRef, Error> {
         match self.send_store(script.into()).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
@@ -140,10 +213,11 @@ impl Resolve {
         }
     }
 
-    pub(crate) async fn execute_with<T>(
+    /// Execute a [`Script`] with an [`ItemRef`] as `self`
+    pub(crate) async fn execute_with<'c, T>(
         &self,
-        item: &ItemRef,
-        script: impl Into<Script<'_>>,
+        item: &'c ItemRef,
+        script: impl Into<Script<'c>>,
     ) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -153,10 +227,11 @@ impl Resolve {
         self.execute(script).await
     }
 
-    pub(crate) async fn store_with(
+    /// Store a value with an [`ItemRef`] as `self`
+    pub(crate) async fn store_with<'c>(
         &self,
-        item: &ItemRef,
-        script: impl Into<Script<'_>>,
+        item: &'c ItemRef,
+        script: impl Into<Script<'c>>,
     ) -> Result<ItemRef, Error> {
         let mut script = script.into();
         script = script.with(item)?;
@@ -164,26 +239,26 @@ impl Resolve {
     }
 }
 
-/// Writes the saved `.dll` and the generated `.lua` script to a temporary directory.\
-/// Which it then uses to start `fuscript.exe` with said script and the specified port.\
+/// Writes the saved `.dll` and the generated `.lua` script to a temp directory.
+/// The client then sends some configuration data and the module send back when
+/// it's ready to accept connections and which port to send data to.
 ///
 /// # Errors
-/// If the lua module fails to reach *DaVinci Resolve* or for some other reason the lua module itself crashes before starting the http server.
-///
-async fn start(temp_dir: &TempDir, timeout_ms: u64) -> Result<(u16, JoinHandle<()>), Error> {
+/// If the lua module fails to reach *`DaVinci Resolve`* or for some other reason the lua module itself crashes before starting the http server.
+async fn start(temp_dir: &TempDir, config: &ResolveConfig) -> Result<(u16, JoinHandle<()>), Error> {
     let dll = temp_dir.path().join(format!("{MODULE_NAME}.dll"));
     write(&dll, LUA_MODULE).await?;
 
-    let script = dll_script(temp_dir.path());
+    let (listener, port) = start_client_server().await?;
+
+    let script = dll_script(temp_dir.path(), port);
     let script_path = temp_dir.path().join("script.lua");
     write(&script_path, &script).await?;
 
-    let (listener, port) = start_client_server().await?;
-
-    spawn_script_server(&script_path, port, timeout_ms).await?;
+    spawn_script_server(&script_path).await?;
     let (mut stream, _addr) = listener.accept().await?;
 
-    let port = handle_module_request(&mut stream).await?;
+    let port = handle_module_request(&mut stream, config).await?;
 
     let handle = start_ping_responder(stream).await;
 

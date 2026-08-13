@@ -2,22 +2,26 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// Packets sent by the client and module before the module starts accepting requests / outside the normal request handling
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
 pub enum PrePacket {
-    /// Sent by the module to tell the client that it's server is ready for connections.  
+    /// Sent by the module to tell the client that it's server is ready for connections.
     /// The module returns its own port back to the client
     Ready = 0,
-    /// Sent by module to tell the client that it was unable to reach/get the Resolve() object
+    /// Sent by module to tell the client that it was unable to reach/get the `Resolve()` object
     NoResolve = 1,
     /// Sent by the module to tell the client that some error happened while setting up the module
     /// The error formatted as a string is sent back as the response.
     Error = 2,
     Ping = 3,
     Pong = 4,
+    /// Sent by the client to the module with the specified configuration
+    Configuration = 5,
 }
 
 impl PrePacket {
+    #[must_use]
     pub fn from_u8(b: u8) -> Option<Self> {
         Some(match b {
             0 => Self::Ready,
@@ -25,11 +29,13 @@ impl PrePacket {
             2 => Self::Error,
             3 => Self::Ping,
             4 => Self::Pong,
+            5 => Self::Configuration,
             _ => return None,
         })
     }
 }
 
+/// Packets sent during a normal execution request to the module
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum MsgPacket {
@@ -45,6 +51,7 @@ pub enum MsgPacket {
 }
 
 impl MsgPacket {
+    #[must_use]
     pub fn from_u8(b: u8) -> Option<Self> {
         Some(match b {
             0 => Self::Execute,
@@ -56,6 +63,7 @@ impl MsgPacket {
     }
 }
 
+/// Different types of arguments that some piece of lua code can have along side it
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum ArgType {
@@ -66,6 +74,7 @@ pub enum ArgType {
 }
 
 impl ArgType {
+    #[must_use]
     pub fn from_u8(b: u8) -> Option<Self> {
         Some(match b {
             0 => Self::Arg,
@@ -83,11 +92,16 @@ impl ArgType {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ScriptResponse<T> {
     Err(String),
-    Ok { value: T, eval_time: Duration },
+    Ok {
+        /// The value returned from the module
+        value: T,
+        /// How long it took to execute the lua code
+        eval_time: Duration,
+    },
 }
 
 impl<T> ScriptResponse<T> {
-    #[inline(always)]
+    #[inline]
     pub fn value(self) -> Option<T> {
         match self {
             Self::Err(_) => None,
@@ -98,7 +112,7 @@ impl<T> ScriptResponse<T> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn eval_time(&self) -> Option<&Duration> {
         match self {
             Self::Err(_) => None,
@@ -109,7 +123,7 @@ impl<T> ScriptResponse<T> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn err(self) -> Option<String> {
         match self {
             Self::Err(e) => Some(e),
@@ -118,5 +132,38 @@ impl<T> ScriptResponse<T> {
                 eval_time: _,
             } => None,
         }
+    }
+}
+
+/// Configuration for `Resolve` instances
+///
+/// Can be used to increase the internal ping timeout and or if it should reset globals after every execution.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolveConfig {
+    /// If the module don't get a pong packet back from the client in [`timeout`](ResolveConfig::timeout) time, it will exit.
+    pub timeout: Duration,
+    /// If the module should reset the lua globals between every request.
+    /// For short, small requests, this can increase performance by a good bit.
+    /// You just need to make sure you use `local` variables in lua and don't clutter the global table to mess with different scripts
+    pub reset_globals: bool,
+}
+
+impl ResolveConfig {
+    /// Default configuration for all instances
+    pub const DEFAULT: Self = ResolveConfig {
+        timeout: Duration::from_secs(60),
+        reset_globals: true,
+    };
+
+    /// Default configuration except that globals don't get reset
+    pub const KEEP_GLOBALS: Self = ResolveConfig {
+        timeout: Duration::from_secs(60),
+        reset_globals: false,
+    };
+}
+
+impl Default for ResolveConfig {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }

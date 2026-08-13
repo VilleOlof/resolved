@@ -1,5 +1,6 @@
 use mlua::Error;
 
+/// Errors during a normal execution request
 #[derive(Debug, thiserror::Error)]
 pub enum RequestError {
     #[error("No registry key with this id({0}) was found")]
@@ -23,6 +24,7 @@ pub enum RequestError {
     TryGet(#[from] bytes::TryGetError),
 }
 
+/// Errors during setup and outside normal requests
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleError {
     #[error(transparent)]
