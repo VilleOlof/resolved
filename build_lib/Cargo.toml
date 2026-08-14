@@ -1,7 +1,13 @@
 [package]
 name = "build_lib"
+description = "Binary to automatically build 'lua5.1.lib'"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+readme = "../readme.md"
+homepage = "https://github.com/VilleOlof/resolved"
+repository = "https://github.com/VilleOlof/resolved"
+authors = ["VilleOlof"]
 publish = false
 
 [dependencies]

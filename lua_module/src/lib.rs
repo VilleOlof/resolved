@@ -51,7 +51,7 @@ fn start(lua: &Lua, port: u16) -> LuaResult<()> {
 
 /// Creates a deep clone of the table instead of just the handle
 fn clone_table(lua: &Lua, t: &LuaTable) -> Result<LuaTable, ModuleError> {
-    let r = lua.create_table()?;
+    let r = lua.create_table_with_capacity(0, t.len()? as usize)?;
     for v in t.pairs::<LuaValue, LuaValue>() {
         let (k, v) = v?;
         r.set(k, v)?;
@@ -65,12 +65,23 @@ fn sleep(_: &Lua, millis: u64) -> LuaResult<()> {
     Ok(())
 }
 
+fn table_keys(_: &Lua, table: LuaTable) -> LuaResult<Vec<LuaValue>> {
+    let mut t = Vec::with_capacity(table.len()? as usize);
+    for pair in table.pairs::<LuaValue, LuaValue>() {
+        t.push(pair?.0);
+    }
+    Ok(t)
+}
+
 /// The real start functions once the outer one has connected to the module and gathered the configuration
 fn _start(lua: &Lua, client: SharedClient, config: ResolveConfig) -> Result<(), ModuleError> {
     let globals_ref = lua.globals();
     let resolve = resolve(lua, client.clone())?;
     globals_ref.set("resolve", &resolve)?;
     globals_ref.set("sleep", lua.create_function(sleep)?)?;
+
+    // specific crate functions that we use to speed up ItemRefList
+    globals_ref.set("__resolved_table_keys", lua.create_function(table_keys)?)?;
 
     lua.set_globals(globals_ref.clone())?;
 
@@ -85,14 +96,22 @@ fn _start(lua: &Lua, client: SharedClient, config: ResolveConfig) -> Result<(), 
     ping_requester(client.clone(), config.timeout);
 
     let mut item_ref_handler = ItemRefHandler::new(lua);
+    let mut buffers = Buffers::default();
 
     for stream in server.incoming() {
         let mut request = Request::new(stream?);
         if config.reset_globals {
             lua.set_globals(clone_table(lua, &globals_ref)?)?;
         }
+        buffers.clear();
 
-        let res = match handle_req(lua, &mut item_ref_handler, &resolve, &mut request) {
+        let res = match handle_req(
+            lua,
+            &mut item_ref_handler,
+            &resolve,
+            &mut request,
+            &mut buffers,
+        ) {
             Err(e) => serialize_err(e.to_string()).expect("Failed to serialize err string"),
             Ok(buf) => buf,
         };
@@ -140,9 +159,26 @@ fn resolve(lua: &Lua, client: SharedClient) -> Result<LuaAnyUserData, ModuleErro
 }
 
 /// Executes some lua code and times it
-fn execute(lua: &Lua, code: &str) -> Result<(LuaValue, Duration), RequestError> {
-    let lua_code = lua.load(code.trim());
+fn execute(lua: &Lua, code: &[u8]) -> Result<(LuaValue, Duration), RequestError> {
+    let lua_code = lua.load(code);
     let eval_i = std::time::Instant::now();
     let value: LuaValue = lua_code.eval()?;
     Ok((value, eval_i.elapsed()))
+}
+
+#[derive(Debug, Default)]
+struct Buffers {
+    payload: Vec<u8>,
+    lua_code: Vec<u8>,
+    nameless_args: Vec<LuaValue>,
+    global_arg_keys: Vec<String>,
+}
+
+impl Buffers {
+    pub fn clear(&mut self) {
+        self.payload.clear();
+        self.lua_code.clear();
+        self.nameless_args.clear();
+        self.global_arg_keys.clear();
+    }
 }

@@ -2,10 +2,20 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use futures::future::join_all;
 use resolved::{OwnedScript, PooledResolve, Resolve, ResolveConfig, Script};
 use std::{hint::black_box, sync::Arc, time::Duration};
-use tokio::runtime::Runtime;
 
 const NOOP: &str = "";
 const SLEEP: &str = "sleep(10)";
+const LENGTHY: &str = r#"
+local a = 57 + 12
+local b = a + 41
+local c = "aaaa" .. "bbbb"
+local d = a * b
+local e = c .. "cccc"
+function add(a, b)
+    return a + b
+end
+local f = add(5, 1)
+"#;
 
 async fn run_n<'s>(resolve: &Resolve, n: usize, script: impl Into<Script<'s>>) {
     let script = script.into();
@@ -82,6 +92,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     //     b.to_async(&rt).iter(|| pool_n(&pool_8, 64, NOOP));
     // });
     exec.finish();
+
+    let resolve = rt.block_on(async { Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap() });
+    let mut exec_lengthy = c.benchmark_group("execute_lengthy");
+    exec_lengthy.bench_function("single_1", |b| {
+        b.to_async(&rt).iter(|| run_n(&resolve, 1, LENGTHY));
+    });
+    exec_lengthy.bench_function("single_64", |b| {
+        b.to_async(&rt).iter(|| run_n(&resolve, 64, LENGTHY));
+    });
+    exec_lengthy.finish();
 
     let mut work = c.benchmark_group("work");
     work.bench_function("single_1", |b| {

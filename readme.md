@@ -306,16 +306,28 @@ you can set the environment variable `FUSCRIPT` to the path to the `fuscript.exe
 
 ## Benchmarks
 
-### `Resolve` instance
+### Resolve client baseline
+Time to create a new `Resolve` instance.  
+This benchmarks connect to the test dummy binary instead of DaVinci Resolve.  
+Also measures the startup of the lua module.
+
+| Metric    | Time        |
+|-----------|-------------|
+| Mean      | `65.692 ms` |
+| Std. Dev. | `19.488 ms` |
+| Median    | `57.668 ms` |
+| MAD       | `8.2494 ms` |
+
+### Resolve client
 Time to create a new `Resolve` instance that connects to DaVinci Resolve.  
 This also measures the startup time of the lua module.
 
 | Metric    | Time        |
 |-----------|-------------|
-| Mean      | `116.64 ms` |
-| Std. Dev. | `25.649 ms` |
-| Median    | `111.27 ms` |
-| MAD       | `15.759 ms` |
+| Mean      | `547.41 ms` |
+| Std. Dev. | `6.1195 ms` |
+| Median    | `550.04 ms` |
+| MAD       | `5.1227 ms` |
 
 ### Script execution baseline
 This is time to execute an empty script.  

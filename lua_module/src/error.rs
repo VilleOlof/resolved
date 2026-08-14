@@ -9,6 +9,8 @@ pub enum RequestError {
     InvalidPacketType(u8),
     #[error("A ArgType of byte {0} is not valid")]
     InvalidArgType(u8),
+    #[error("Tried to call StoreTable with a value that wasn't a table, got a: {0:?}")]
+    NotATable(&'static str),
 
     #[error(transparent)]
     FromUtf8(#[from] std::string::FromUtf8Error),

@@ -1,12 +1,18 @@
 [package]
 name = "resolved_macros"
+description = "script! macro for 'resolved'"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+readme = "../readme.md"
+homepage = "https://github.com/VilleOlof/resolved"
+repository = "https://github.com/VilleOlof/resolved"
+authors = ["VilleOlof"]
 
 [dependencies]
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
 syn = { version = "3", features = ["full"] }
 quote = "1"
-proc-macro2 = { version = "1.0", features = ["span-locations"] }
 
 [lib]
 proc-macro = true

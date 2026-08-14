@@ -9,7 +9,7 @@ use mlua::prelude::*;
 use resolved_shared::{ArgType, MsgPacket, ScriptResponse};
 use serde::Serialize;
 
-use crate::{error::RequestError, execute, handler::SELF, item_ref::ItemRefHandler};
+use crate::{Buffers, error::RequestError, execute, handler::SELF, item_ref::ItemRefHandler};
 
 const ARG_GLOBAL: &str = "arg";
 
@@ -44,11 +44,11 @@ impl Request {
     read_num!(u64, read_u64);
 
     /// Reads the entire sent payload by the client
-    pub fn read_payload(&mut self) -> Result<Vec<u8>, RequestError> {
+    pub fn read_payload(&mut self, buffers: &mut Buffers) -> Result<(), RequestError> {
         let len = self.read_u64()? as usize;
-        let mut data = vec![0u8; len];
-        self.0.read_exact(&mut data)?;
-        Ok(data)
+        buffers.payload.resize(len, 0u8);
+        self.0.read_exact(&mut buffers.payload)?;
+        Ok(())
     }
 }
 
@@ -69,8 +69,8 @@ pub fn serialize_err(err: String) -> Result<Vec<u8>, RequestError> {
 pub struct Payload(Bytes);
 impl Payload {
     /// Wraps the buffer in [`Bytes`] internally
-    pub fn new(data: Vec<u8>) -> Self {
-        Self(Bytes::from_owner(data))
+    pub fn new(data: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(data))
     }
 
     /// Handles the request and executes the provided script in the payload, returns back the lua value returned from the execution.
@@ -79,17 +79,16 @@ impl Payload {
         lua: &Lua,
         item_ref_handler: &mut ItemRefHandler,
         resolve: &LuaAnyUserData,
+        buffers: &mut Buffers,
     ) -> Result<(LuaValue, Duration), RequestError> {
         let is_ref = self.u8()? == 1;
         let ref_id = if is_ref { Some(self.u64()?) } else { None };
 
         let globals = lua.globals();
 
-        let lua_code = self.string()?;
+        self.string_into(&mut buffers.lua_code)?;
         let args_len = self.u32()?;
 
-        let mut nameless_args = Vec::new();
-        let mut global_args = Vec::new();
         for _ in 0..args_len {
             let raw_arg_type = self.u8()?;
             let arg_type =
@@ -99,33 +98,38 @@ impl Payload {
                 ArgType::Arg => {
                     let data_len = self.u32()? as usize;
                     let value = self.buf_into_lua_value(lua, data_len)?;
-                    nameless_args.push(value);
+                    buffers.nameless_args.push(value);
                 }
                 ArgType::ArgRef => {
                     let id = self.u64()?;
                     let value = item_ref_handler.get::<LuaValue>(id)?;
-                    nameless_args.push(value);
+                    buffers.nameless_args.push(value);
                 }
                 ArgType::NamedArg => {
                     let key = self.string()?;
                     let data_len = self.u32()? as usize;
                     let value = self.buf_into_lua_value(lua, data_len)?;
-                    global_args.push(key.clone());
+                    buffers.global_arg_keys.push(key.clone());
                     globals.set(key, value)?;
                 }
                 ArgType::NamedArgRef => {
                     let key = self.string()?;
                     let id = self.u64()?;
                     let value = item_ref_handler.get::<LuaValue>(id)?;
-                    global_args.push(key.clone());
+                    buffers.global_arg_keys.push(key.clone());
                     globals.set(key, value)?;
                 }
             }
         }
 
-        if !nameless_args.is_empty() {
-            let arg =
-                lua.create_table_from(nameless_args.iter().enumerate().map(|(i, x)| (i + 1, x)))?;
+        if !buffers.nameless_args.is_empty() {
+            let arg = lua.create_table_from(
+                buffers
+                    .nameless_args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| (i + 1, x)),
+            )?;
 
             globals.set(ARG_GLOBAL, &arg)?;
         }
@@ -139,12 +143,13 @@ impl Payload {
             None => globals.set(SELF, resolve)?,
         }
 
-        let return_value = execute(lua, &lua_code)?;
+        let return_value = execute(lua, &buffers.lua_code)?;
 
         // we also need to reset the argument globals since
         // if a user has disabled reset_globals then their script arguments shouldnt clutter anyway
-        for name in global_args {
-            globals.remove(name)?;
+        for name in buffers.global_arg_keys.iter_mut() {
+            let taken_name = std::mem::take(name);
+            globals.remove(taken_name)?;
         }
         // we dont need to remove SELF as its gonna be set next execution anyway
 
@@ -178,8 +183,18 @@ impl Payload {
         let len = self.u32()?;
         let mut buf = vec![0u8; len as usize];
         self.0.copy_to_slice(&mut buf);
-        let str = String::from_utf8(buf)?;
+        // SAFETY: users can only input string data via Script on the client
+        // which already is a utf8 string so this must also be safe
+        let str = unsafe { String::from_utf8_unchecked(buf) };
         Ok(str)
+    }
+
+    /// Reads a length-prefixed string into a buffer
+    pub fn string_into(&mut self, buf: &mut Vec<u8>) -> Result<(), RequestError> {
+        let len = self.u32()?;
+        buf.resize(len as usize, 0u8);
+        self.0.copy_to_slice(buf);
+        Ok(())
     }
 
     /// Converts a raw rmp buffer value into a [`LuaValue`] by converting it first to a [`rmpv::Value`] and then using the lua context

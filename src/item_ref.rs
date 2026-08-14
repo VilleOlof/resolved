@@ -1,6 +1,7 @@
 use serde::de::DeserializeOwned;
+use std::sync::{Arc, RwLock};
 
-use crate::{Error, Resolve, Script};
+use crate::{Error, ItemRefList, Resolve, Script};
 
 /// A *reference* to a `Lua` value.  
 ///
@@ -10,12 +11,23 @@ use crate::{Error, Resolve, Script};
 /// Can also be used as an argument to a [`Script`] with [`arg_ref`](Script::arg_ref) or [`named_arg_ref`](Script::named_arg_ref).
 #[derive(Debug, Clone)]
 pub struct ItemRef {
+    /// The inner referenced id is wrapped in an Arc to support cloning.\
+    /// We only want to send a drop packet when the reference is totally gone from the client (aka 0 references here).
+    pub(crate) value: Arc<LuaRef>,
+}
+
+/// The inner id and resolve instance for an [`ItemRef`].  
+///
+/// We only implement our custom send drop packet [`Drop`] on this Arc'd inner value
+#[derive(Debug)]
+pub(crate) struct LuaRef {
     /// The rolling `id` used in the lua module to retrieve the `RegistryKey` with the referenced value.
     pub(crate) id: u64,
-    /// The [`Resolve`] instance which this [`ItemRef`] was taken from.\
-    /// The [`Option`] here is nothing to worry about and only to easier impl [`Drop`].\
-    /// [`Resolve`] can always be used during the lifetime of the [`ItemRef`] with [`resolve`](ItemRef::resolve).
+    /// The [`Resolve`] instance which this [`ItemRef`] was taken from.
     pub(crate) resolve: Option<Resolve>,
+    /// If the reference has been dropped in the module.\
+    /// If this is `true`: calling any code with this will cause a [`Error::LuaModuleErr`]
+    pub(crate) dropped: RwLock<bool>,
 }
 
 impl ItemRef {
@@ -28,8 +40,11 @@ impl ItemRef {
     #[must_use]
     pub unsafe fn new(resolve: Resolve, id: u64) -> Self {
         Self {
-            id,
-            resolve: Some(resolve),
+            value: Arc::new(LuaRef {
+                id,
+                resolve: Some(resolve),
+                dropped: RwLock::new(false),
+            }),
         }
     }
 
@@ -37,15 +52,21 @@ impl ItemRef {
     #[inline]
     #[must_use]
     pub fn id(&self) -> u64 {
-        self.id
+        self.value.id
+    }
+
+    /// Returns if the reference has already been marked as dropped.\
+    /// The registry key in the module will likely already have been removed then.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_dropped(&self) -> bool {
+        *self.value.dropped.read().unwrap()
     }
 
     /// Returns the [`Resolve`] instance which this [`ItemRef`] was taken from.
     #[inline]
-    pub(crate) fn resolve(&self) -> &Resolve {
-        self.resolve
-            .as_ref()
-            .expect("resolve must exist before drop")
+    pub(crate) fn resolve(&self) -> Resolve {
+        self.value.resolve.as_ref().unwrap().clone()
     }
 
     /// Execute some `lua` code, setting `self` to the stored reference value and returning what the code returned.
@@ -61,7 +82,7 @@ impl ItemRef {
         self.resolve().execute_with(self, script).await
     }
 
-    /// Store references to `Lua` values in `Rust`,
+    /// Store a reference to `Lua` value in `Rust`,
     /// global variable `self` is set to the value stored in the [`ItemRef`].
     ///
     /// Look at [`Resolve::store`] for more info on how it works.  
@@ -70,6 +91,33 @@ impl ItemRef {
     /// If the module executing the code fails or if the script can't be sent
     pub async fn store<'c>(&'c self, script: impl Into<Script<'c>>) -> Result<ItemRef, Error> {
         self.resolve().store_with(self, script).await
+    }
+
+    /// Store multiple references to `Lua` values in `Rust`,
+    ///
+    /// Look at [`Resolve::store_list`] for more info on how it works.  
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent.\
+    /// Or if the returned value from lua was not a *table*
+    pub async fn store_list<'c>(
+        &'c self,
+        script: impl Into<Script<'c>>,
+    ) -> Result<ItemRefList, Error> {
+        self.resolve().store_list_with(self, script).await
+    }
+
+    /// Returns the referenced value directly.
+    ///
+    /// Reference is still valid, this just clones the value.
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent
+    pub async fn value<T>(&self) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        self.execute("return self").await
     }
 
     /// Spawns a background task to drop the [`ItemRef`] in the module
@@ -93,16 +141,20 @@ impl ItemRef {
     }
 }
 
-impl Drop for ItemRef {
+impl Drop for LuaRef {
     fn drop(&mut self) {
-        let resolve = std::mem::take(&mut self.resolve).expect("resolve must exist on drop");
-        ItemRef::sync_manual_drop(resolve, self.id);
+        let dropped = { *self.dropped.read().unwrap() };
+        if !dropped {
+            *self.dropped.write().unwrap() = true;
+            let resolve = std::mem::take(&mut self.resolve).expect("resolve must exist on drop");
+            ItemRef::sync_manual_drop(resolve, self.id);
+        }
     }
 }
 
 impl std::hash::Hash for ItemRef {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.id().hash(state);
         self.resolve().id().hash(state);
     }
 }

@@ -48,6 +48,12 @@ pub enum MsgPacket {
     DropItem = 2,
     /// Explicitly tell the lua module to exit
     Shutdown = 3,
+    /// Behaves the same as Store, but the returned value must be a table,
+    /// where each value will be inserted into the item ref handler.
+    /// So the user can easily iterate over all refs in a table
+    StoreTable = 4,
+    /// Drops a whole list of registry ids at once
+    DropMany = 5,
 }
 
 impl MsgPacket {
@@ -58,6 +64,8 @@ impl MsgPacket {
             1 => Self::Store,
             2 => Self::DropItem,
             3 => Self::Shutdown,
+            4 => Self::StoreTable,
+            5 => Self::DropMany,
             _ => return None,
         })
     }

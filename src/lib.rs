@@ -7,6 +7,7 @@ compile_error!(
 
 mod error;
 mod item_ref;
+mod item_ref_list;
 mod owned_script;
 mod packet;
 mod resolve;
@@ -21,6 +22,7 @@ pub use pool::PooledResolve;
 
 pub use error::Error;
 pub use item_ref::ItemRef;
+pub use item_ref_list::{ItemRefList, RefList};
 pub use owned_script::OwnedScript;
 pub use resolve::Resolve;
 pub use resolved_shared::ResolveConfig;
@@ -114,9 +116,22 @@ mod tests {
 //      and the average time to execute a script (without starting the instance), and fuck async benchmarking, pools work just fine in tests
 // - [X] tidy up cargo.toml's
 //      - [] need to fix shared & macros subcrates cargo.tomls
-// - [] make create ready for release
+// - [X] make create ready for release
 //          root `resolved` and `resolved_shared` needs to be published as we cant use paths in dependencies i think?
 //          `build_lib` and `lua_module` are prebuilt and done before publishing
 //          make sure prebuilts are included in built package etc
-// - [] use the crate from a new binary crate externally and try and use it (rebuild clipboard crate?)
+// - [/] use the crate from a new binary crate externally and try and use it (rebuild clipboard crate?)
 // - [] macro tests
+// - [/] Some solution for references which is a sequence in lua
+//      we would want to be able to iterate over each reference in rust
+//      like get all timeline clips
+//      then iterate over them in rust with each iter having that specific item ref with it
+//      if we have some special seq fn, the module should validate that it is indeed a table of some sort
+// - [/] Fix ItemRef Clone and dropping
+//      if you clone an itemref and just drop one of them, all of its clones are also invalid
+// - [] ItemRef and nil? what if .store fails to return a ref on purpose in script?
+// - [] tracing feature, really useful to have trace logs in internal for debugging
+// - [] tests on ItemRef cloning and dropping
+//      if we got 2 cloned ItemRefs and drop one, wait, then the other one should still have a valid id to a value
+// - [] shit ton of tests on ItemRefList
+// - [] reference ItemRefList in someway in readme
