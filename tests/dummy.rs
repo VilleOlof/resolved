@@ -72,6 +72,33 @@ mod dummy {
     }
 
     #[tokio::test]
+    async fn reference_value() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let item = resolve.store(r#"true"#).await?;
+        let value = item.value::<bool>().await?;
+        assert!(value);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn item_option_reference() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let item = resolve.store_option(r#"true"#).await?;
+        assert!(item.is_some());
+
+        let item = resolve.store_option(r#"{}"#).await?;
+        assert!(item.is_some());
+
+        let item = resolve.store_option(r#"nil"#).await?;
+        assert!(item.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn drop_reference() -> ResolveResult<()> {
         let resolve = Resolve::new().await?;
 
@@ -106,7 +133,84 @@ mod dummy {
             panic!("wrong error type, expected LuaModuleErr")
         };
 
-        // item's real Drop is called here and will silently fail and print that to stderr
+        // item's real Drop is called here but vale.dropped will have been set to true so it doesnt run
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cloned_reference() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let item = resolve.store("10.10").await?;
+
+        // if theres more than one ref to the same underlying id
+        // and we drop one, the registry id should remain since theres at least one ref living
+        let other = item.clone();
+        drop(item);
+
+        // if the first one would have ran the drop packet
+        // we wait to be sure:
+        sleep(Duration::from_millis(500)).await;
+
+        let value: f64 = other.execute("self").await?;
+        assert_eq!(10.10, value);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reference_list() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let items = resolve
+            .store_list("{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }")
+            .await?;
+        assert_eq!(10, items.len());
+
+        for (i, x) in items.list().iter().enumerate() {
+            assert_eq!(i + 1, x.value::<usize>().await?);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reference_list_keys() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let map = resolve
+            .store_list("{ a = 15, b = 41, c = 95, d = 26, e = 82 }")
+            .await?;
+        assert_eq!(5, map.len());
+
+        let mut keys = map.keys::<String>().await?;
+        keys.sort(); // maps are random order
+        assert_eq!(vec!["a", "b", "c", "d", "e"], keys);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn drop_reference_list() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let map = resolve.store_list("{ 1, 2, 3, 4 }").await?;
+        let ids: Vec<u64> = map.list().iter().map(|x| x.id()).collect();
+
+        drop(map);
+
+        sleep(Duration::from_millis(500)).await;
+
+        for id in ids {
+            let item = unsafe { ItemRef::new(resolve.clone(), id) };
+
+            // item id was dropped in the batch drop from the list drop
+            // so all of them should return a LuaModuleErr
+            let Error::LuaModuleErr(_) = item.value::<i32>().await.err().unwrap() else {
+                panic!("wrong error type, expected LuaModuleErr")
+            };
+        }
 
         Ok(())
     }
@@ -175,6 +279,22 @@ mod dummy {
 
         let value: i32 = resolve.execute(script).await?;
         assert_eq!(55, value);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn script_map_arg() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert("a", 5);
+        map.insert("b", 14);
+
+        let script = Script::new(r#"map["a"]"#).named_arg("map", &map)?;
+
+        let value: i32 = resolve.execute(script).await?;
+        assert_eq!(5, value);
 
         Ok(())
     }
@@ -255,47 +375,67 @@ mod dummy {
 
         Ok(())
     }
-}
 
-use resolved::prelude::*;
-use resolved::script;
+    #[cfg(feature = "macros")]
+    mod macros {
+        use super::*;
 
-#[tokio::test]
-async fn mac() -> ResolveResult<()> {
-    let resolve = Resolve::new().await?;
-    // let to_run = script! {
-    //     self:GetVersionString()
-    // };
+        #[tokio::test]
+        async fn macro_simple() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
 
-    // let my_var = 5;
-    // let captured = script! {
-    //     return $my_var
-    // };
+            let five = resolve.execute::<i32>(script! { 5 }).await?;
+            assert_eq!(5, five);
 
-    // let var = resolve.execute::<i32>(captured).await?;
-    // assert_eq!(my_var, var);
-    // println!("{var}");
+            let multiline = resolve
+                .execute::<i32>(script! {
+                    local a = 5
+                    local b = 2
+                    local c = a * b
+                    return c
+                })
+                .await?;
+            assert_eq!(10, multiline);
 
-    let (a, b) = (5, 1);
-    let result: i32 = resolve.execute(script! { return $a + $b }).await?;
-    assert_eq!(6, result);
+            Ok(())
+        }
 
-    let p = resolve
-        .store(script! {
-            local pm = self:GetProjectManager()
-            local p = pm:GetCurrentProject()
-            return p
-        })
-        .await?;
+        #[tokio::test]
+        async fn macro_variables() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
 
-    let timeline = p
-        .store(script! { return self:GetCurrentTimeline() })
-        .await?;
+            let num = 67.69;
+            let same: f64 = resolve.execute(script! { $num }).await?;
+            assert_eq!(num, same);
 
-    // tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let a = "Hello";
+            let b = ", World!";
+            let classic: String = resolve.execute(script! { $a .. $b }).await?;
+            assert_eq!("Hello, World!", classic);
 
-    p.execute::<bool>(script! { self:SetCurrentTimeline(#timeline) })
-        .await?;
+            let text = "|";
+            let many: String = resolve.execute(script! { $text .. $text .. $text }).await?;
+            assert_eq!("|||", many);
 
-    Ok(())
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn macro_reference_variables() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
+
+            let items = resolve.store(script! { { 1, 2, 3, 4, 5 } }).await?;
+
+            let first: i32 = resolve.execute(script! { @items[1] }).await?;
+            let last: i32 = resolve.execute(script! { @items[#@items] }).await?;
+
+            assert_eq!(1, first);
+            assert_eq!(5, last);
+
+            let both: bool = resolve.execute(script! { $first == @items[1] }).await?;
+            assert!(both);
+
+            Ok(())
+        }
+    }
 }

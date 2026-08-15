@@ -9,9 +9,9 @@ use mlua::prelude::*;
 use resolved_shared::{ArgType, MsgPacket, ScriptResponse};
 use serde::Serialize;
 
-use crate::{Buffers, error::RequestError, execute, handler::SELF, item_ref::ItemRefHandler};
-
-const ARG_GLOBAL: &str = "arg";
+use crate::{
+    Buffers, GLOBAL_ARG, GLOBAL_SELF, error::RequestError, execute, item_ref::ItemRefHandler,
+};
 
 macro_rules! read_num {
     ($t:ty, $f:ident) => {
@@ -131,16 +131,16 @@ impl Payload {
                     .map(|(i, x)| (i + 1, x)),
             )?;
 
-            globals.set(ARG_GLOBAL, &arg)?;
+            globals.set(GLOBAL_ARG, &arg)?;
         }
 
         // set self after globals from arg so consumer cant override self
         match ref_id {
             Some(id) => {
                 let value = item_ref_handler.get::<LuaValue>(id)?;
-                globals.set(SELF, value)?;
+                globals.set(GLOBAL_SELF, value)?;
             }
-            None => globals.set(SELF, resolve)?,
+            None => globals.set(GLOBAL_SELF, resolve)?,
         }
 
         let return_value = execute(lua, &buffers.lua_code)?;

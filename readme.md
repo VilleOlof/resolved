@@ -94,7 +94,7 @@ async fn main() -> ResolveResult<()> {
         let _pool = pool.clone();
         tokio::spawn(async move {
             let _ = _pool.execute::<String>(
-                "return resolve:GetCurrentPage()"
+                "resolve:GetCurrentPage()"
             ).await.unwrap();
         });
     }
@@ -121,7 +121,7 @@ Or when executing code from a `Resolve` instance, you can also use `self`.
 // Execute
 use resolved::prelude::*;
 
-const QUIT: &str = "return resolve:Quit()";
+const QUIT: &str = "resolve:Quit()";
 
 #[tokio::main]
 async fn main() -> ResolveResult<()> {
@@ -153,9 +153,9 @@ use resolved::prelude::*;
 #[tokio::main]
 async fn main() -> ResolveResult<()> {
     let resolve = Resolve::new().await?;
-    let p_manager = resolve.store("return self:GetProjectManager()").await?;
+    let p_manager = resolve.store("self:GetProjectManager()").await?;
 
-    let folder: String = p_manager.execute("return self:GetCurrentFolder").await?;
+    let folder: String = p_manager.execute("self:GetCurrentFolder").await?;
     Ok(())
 }
 ```
@@ -164,7 +164,58 @@ See how we use `self` in both, when we run `.execute` on `Resolve`, it is the gl
 Then when execute with our `ItemRef` which holds a reference to our *project manager*,  
 it changes `self` to that instance so we can use it. Basically, `self` is your active execution instance.
 
+If the stored reference is a *serializeable* value, you can call `.value<T>()` on an `ItemRef` to get it's actual value.
+
 When a `ItemRef` is dropped, it will send a message to the lua context and garbage collect the stored value.
+
+#### Store List
+
+Sometimes the `ItemRef` that you return is a `Table` *(map or array)*, and maybe you'd want to iterate over it... in *rust*  
+Using `.store_list` you can get a list of references that points to all values in the returned `Table`.  
+
+Not only can you easily iterate over all references with `.list()` ,  
+but it's also really performant with large lists.
+
+Normally each `ItemRef` sends a `DropItem` packet when it goes out of scope, blocking the client for just a tiny bit.  
+Now if you had a few hundred items and all of them tries to send a packet at once? That's gonna block for a while.  
+`ItemRefList`, the returned list from `.store_list`, drops all of it's references at once in a single packet.
+
+To iterate over all clips in a timeline track and get their name, you could do something like:
+
+```rust ignore
+// Store List
+use resolved::prelude::*;
+
+#[tokio::main]
+async fn main() -> ResolveResult<()> {
+    let resolve = Resolve::new().await?;
+    let timeline = resolve.store(r#"
+        local pm = self:GetProjectManager()
+        local p = pm:GetCurrentProject()
+        return p:GetCurrentTimeline()
+    "#).await?;
+
+    let clips = timeline.store_list(r#"self:GetItemListInTrack("video", 1)"#).await?;
+
+    for clip in &clips.list() {
+        let name: String = clip.execute("self:GetName()").await?;
+        println!("clip: {name:?}");
+    }
+
+    Ok(())
+}
+```
+
+**Note that the returned must be a `Table` for this to work, otherwise it will error**
+
+And obivously this would be faster to do directly in lua but then you would have no references,  
+no access to each element in Rust to do more execution one or even save just the ones you want.
+
+---
+
+Both `ItemRef` and `ItemRefList` can be cheaply cloned and the internal module references  
+won't ever get dropped until you've dropped your last reference in your code.  
+So an `ItemRef` is always a valid reference, assuming you've done no *unsafe* code.
 
 ### Script
 
@@ -185,7 +236,7 @@ use resolved::prelude::*;
 async fn main() -> ResolveResult<()> {
     let resolve = Resolve::new().await?;
     
-    let script = Script::new("return arg[1] + a")
+    let script = Script::new("arg[1] + a")
         .arg(5)?
         .named_arg("a", 3)?;
 
@@ -220,7 +271,7 @@ use resolved::prelude::*;
 async fn main() -> ResolveResult<()> {
     let resolve = Resolve::new().await?;
 
-    let media_storage = resolve.store("return self:GetMediaStorage").await?;
+    let media_storage = resolve.store("self:GetMediaStorage").await?;
     
     let script = Script::new(
         r#"
@@ -260,11 +311,11 @@ async fn main() -> ResolveResult<()> {
     }).await?;
     assert_eq!(8, result);
 
-    let media = resolve.store("return self:GetMediaStorage").await?;
-    // Reference ItemRef's with: `#`
+    let media = resolve.store("self:GetMediaStorage").await?;
+    // Reference ItemRef's with: `@`
     let result: Vec<String> = resolve.execute(script! {
         local current_page = self:GetCurrentPage()
-        return #media:GetFileList("/")
+        return @media:GetFileList("/")
     }).await?;
 
     Ok(())
@@ -286,7 +337,10 @@ Both of the following features are **enabled by default**:
 - `macros`  
     Enables `script!` macro to write *Lua* in *Rust* with references to variables.
 - `pool`  
-    Enables `PooledResolve` which can contain multiple instances to execute multiple things at the same time
+    Enables `PooledResolve` which can contain multiple instances to execute multiple things at the same time  
+- `tracing`  
+    Enables [`tracing`](https://github.com/tokio-rs/tracing) logging,  
+    this only logs `trace` events during client setup and packet handling.
 
 ## Scripting API Documentation
 

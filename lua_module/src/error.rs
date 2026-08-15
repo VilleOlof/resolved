@@ -29,6 +29,9 @@ pub enum RequestError {
 /// Errors during setup and outside normal requests
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleError {
+    #[error("tried to get the global Resolve() function but got: {0}")]
+    GlobalResolveWasNotAFunction(&'static str),
+
     #[error(transparent)]
     Lua(#[from] Error),
     #[error(transparent)]

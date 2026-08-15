@@ -45,7 +45,7 @@ pub mod prelude {
 /// Write `Lua` code in `Rust` that can reference *Rust* variables directly.  
 ///
 /// Rust values must implement [`Serialize`](https://docs.rs/serde/latest/serde/trait.Serialize.html).\
-/// Notably, [`ItemRef`] doesn't implement `Serialize`, but use `#` instead of `$` to reference it.
+/// Notably, [`ItemRef`] doesn't implement `Serialize`, but use `@` instead of `$` to reference it.
 ///
 /// ## Example
 ///
@@ -60,9 +60,9 @@ pub mod prelude {
 /// let result: i32 = resolve.execute(script! { return $a * $b }).await?;
 /// assert_eq!(4732, result);
 ///
-/// // Reference other lua values (ItemRef) with '#'
+/// // Reference other lua values (ItemRef) with '@'
 /// let page = resolve.store(script! { return self:GetCurrentPage() }).await?;
-/// resolve.execute(script! { self:OpenPage(#page) }).await?;
+/// resolve.execute(script! { self:OpenPage(@page) }).await?;
 /// ```
 ///
 /// ## Syntax Issues
@@ -95,16 +95,26 @@ mod tests {
 
     #[tokio::test]
     async fn simple() -> Result<(), Error> {
+        // let sub = tracing_subscriber::FmtSubscriber::builder()
+        //     .with_max_level(tracing::Level::TRACE)
+        //     .finish();
+        // tracing::subscriber::set_global_default(sub).unwrap();
+
         let resolve = Resolve::new().await?;
 
-        let t = std::time::Instant::now();
-        let ver = resolve
-            .execute::<String>("return resolve:GetVersionString()")
-            .await?;
+        // let t = std::time::Instant::now();
+        // let ver = resolve
+        //     .execute::<String>("return resolve:GetVersionString()")
+        //     .await?;
 
-        println!("{:?}", t.elapsed());
-        assert!(!ver.is_empty());
-        println!("{ver:?}");
+        // println!("{:?}", t.elapsed());
+        // assert!(!ver.is_empty());
+        // println!("{ver:?}");
+
+        let s = resolve.store_list("{ 1, 2, 3, 4, 5}").await?;
+        drop(s);
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         Ok(())
     }
@@ -115,23 +125,16 @@ mod tests {
 //      and show some of those numbers in readme, like time to start a resolve instance
 //      and the average time to execute a script (without starting the instance), and fuck async benchmarking, pools work just fine in tests
 // - [X] tidy up cargo.toml's
-//      - [] need to fix shared & macros subcrates cargo.tomls
+//      - [X] need to fix shared & macros subcrates cargo.tomls
 // - [X] make create ready for release
 //          root `resolved` and `resolved_shared` needs to be published as we cant use paths in dependencies i think?
 //          `build_lib` and `lua_module` are prebuilt and done before publishing
 //          make sure prebuilts are included in built package etc
 // - [/] use the crate from a new binary crate externally and try and use it (rebuild clipboard crate?)
-// - [] macro tests
-// - [/] Some solution for references which is a sequence in lua
-//      we would want to be able to iterate over each reference in rust
-//      like get all timeline clips
-//      then iterate over them in rust with each iter having that specific item ref with it
-//      if we have some special seq fn, the module should validate that it is indeed a table of some sort
-// - [/] Fix ItemRef Clone and dropping
-//      if you clone an itemref and just drop one of them, all of its clones are also invalid
-// - [] ItemRef and nil? what if .store fails to return a ref on purpose in script?
-// - [] tracing feature, really useful to have trace logs in internal for debugging
-// - [] tests on ItemRef cloning and dropping
-//      if we got 2 cloned ItemRefs and drop one, wait, then the other one should still have a valid id to a value
-// - [] shit ton of tests on ItemRefList
-// - [] reference ItemRefList in someway in readme
+// - [X] tracing feature, really useful to have trace logs in internal for debugging
+//      we only need to log client startup for client details, and networking between module
+//      the rest is pointless to log since its direct errors, wrappers mostly and stuff
+//      and 90% of other functions eventually point to send_packet
+// - [] remove all "lua" code written in the library, everything should be direct access
+// - [] ItemRefList 'source' ItemRef gets dropped on its own and not in the batch
+//      but a `send_drop_item` log msg doesnt appear?

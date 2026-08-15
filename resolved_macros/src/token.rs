@@ -60,7 +60,7 @@ enum TokenAttr {
     None,
     /// Starts with `$`, captures normal rust values
     Capture,
-    /// Starts with `#`, captures `ItemRef`'s
+    /// Starts with `@`, captures `ItemRef`'s
     ItemRef,
 }
 
@@ -167,7 +167,7 @@ impl Tokens {
                     )
                     .to_compile_error());
                 }
-            } else if t.is("#") {
+            } else if t.is("@") {
                 if let Some(next) = iter.next()
                     && matches!(next.tree, TokenTree::Ident(_))
                 {
@@ -175,7 +175,7 @@ impl Tokens {
                 } else {
                     return Err(syn::Error::new(
                         t.tree.span().into(),
-                        "`#` must be followed by an identifier",
+                        "`@` must be followed by an identifier",
                     )
                     .to_compile_error());
                 }

@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use parking_lot::RwLock;
 use resolved_shared::{ResolveConfig, ScriptResponse};
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
@@ -62,6 +63,8 @@ struct InnerResolve {
     /// We need to store the handle to the background task that responds to pings from the lua module,
     /// so we can properly abort the task when this instance is dropped
     ping_responder: JoinHandle<()>,
+    /// If the module was shutdown or if the module in someway shutdown, this is set to `true`
+    cancelled: Arc<RwLock<bool>>,
 }
 
 /// Internal buffers that [`Resolve`] can reuse to save allocations
@@ -88,8 +91,7 @@ impl Debug for Buffers {
 // when the inner arc'd resolve instance is fully dropped then we can discard the module and bg tasks
 impl Drop for InnerResolve {
     fn drop(&mut self) {
-        let _ = Resolve::send_shutdown(&self.host);
-        self.ping_responder.abort();
+        self.shutdown();
     }
 }
 
@@ -98,6 +100,7 @@ impl PartialEq<Resolve> for Resolve {
         self.id() == other.id()
     }
 }
+impl Eq for Resolve {}
 
 impl std::hash::Hash for Resolve {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -124,13 +127,26 @@ impl Resolve {
     /// - The setup server communication fails
     /// - The module startup fails
     pub async fn new_with_config(config: &ResolveConfig) -> Result<Self, Error> {
+        let id = fastrand::u64(..);
+
+        #[cfg(feature = "tracing")]
+        let span = tracing::trace_span!("new_resolve", id);
+        #[cfg(feature = "tracing")]
+        let _enter = span.enter();
+
         let temp_dir = TempDir::new()?;
 
-        let (port, ping_responder) = start(&temp_dir, config).await?;
+        #[cfg(feature = "tracing")]
+        tracing::trace!(
+            dir = ?temp_dir,
+            "Created temporary directory",
+        );
+
+        let cancelled = Arc::new(RwLock::new(false));
+
+        let (port, ping_responder) = start(&temp_dir, config, cancelled.clone()).await?;
         let host = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
         let buffers = Mutex::new(Buffers::default());
-
-        let id = fastrand::u64(..);
 
         Ok(Self {
             inner: Arc::new(InnerResolve {
@@ -139,6 +155,7 @@ impl Resolve {
                 host,
                 _temp_dir: temp_dir,
                 ping_responder,
+                cancelled,
             }),
         })
     }
@@ -153,6 +170,11 @@ impl Resolve {
     #[inline]
     pub(crate) fn host(&self) -> SocketAddr {
         self.inner.host
+    }
+
+    #[inline]
+    pub(crate) fn cancelled(&self) -> bool {
+        *self.inner.cancelled.read()
     }
 
     #[inline]
@@ -224,7 +246,8 @@ impl Resolve {
     /// Instead of returning some value, you get an [`ItemRef`].
     /// This is just an **id** that resolves to the stored value when executing.
     ///
-    /// You can store any value as an [`ItemRef`], a number, a function, or even an instance of a *timeline*!
+    /// You can store any value as an [`ItemRef`], a number, a function, or even an instance of a *timeline*!\
+    /// Except for `nil`, in that scenario this returns [`Error::NilItemRef`].
     ///
     /// And you can also can [`execute`](ItemRef::execute) and [`.store`](ItemRef::store) on the [`ItemRef`] itself.
     /// in that case, the global variable `self` becomes the value of that [`ItemRef`]
@@ -238,14 +261,32 @@ impl Resolve {
     /// ```
     ///
     /// # Errors
-    /// If the module executing the code fails or if the script can't be sent
+    /// If the module executing the code fails, if the script can't be sent or if the returned value is `nil`
     pub async fn store(&self, script: impl Into<Script<'_>>) -> Result<ItemRef, Error> {
+        Ok(self.store_option(script).await?.ok_or(Error::NilItemRef)?)
+    }
+
+    /// Maybe stores a reference to `Lua` value in `Rust`
+    ///
+    /// If the returned value is `nil`, this will return `None`.
+    ///
+    /// Look at [`store`](Resolve::store) for more info.
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent
+    pub async fn store_option(
+        &self,
+        script: impl Into<Script<'_>>,
+    ) -> Result<Option<ItemRef>, Error> {
         match self.send_store(script.into()).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::Ok {
                 value,
                 eval_time: _,
-            } => Ok(unsafe { ItemRef::new(self.clone(), value) }),
+            } => Ok(match value {
+                Some(v) => Some(unsafe { ItemRef::new(self.clone(), v) }),
+                None => None,
+            }),
         }
     }
 
@@ -293,6 +334,54 @@ impl Resolve {
         }
     }
 
+    /// Get all keys from a referenced table
+    ///
+    /// If you want all values from a table, see [`store_list`](Resolve::store_list).  
+    ///
+    /// The value stored in the [`ItemRef`] must be of type `Table` in lua.
+    ///
+    /// ## Example
+    ///
+    /// The following table:
+    /// ```lua
+    /// return { a = 1, b = 2, c = 3 }
+    /// ```
+    /// would return `["a", "b", "c"]` and `T` would be of type [`String`] here.
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent,
+    /// or if the referenced [`ItemRef`] is **not** a table
+    pub async fn table_keys<'c, T>(&self, item: &'c ItemRef) -> Result<Vec<T>, Error>
+    where
+        T: DeserializeOwned,
+    {
+        if self.id() != item.resolve().id() {
+            return Err(Error::MismatchedItemRef(self.id(), item.resolve().id()));
+        }
+
+        match self.send_table_keys(item.id()).await? {
+            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::Ok {
+                value,
+                eval_time: _,
+            } => Ok(value),
+        }
+    }
+
+    /// Returns the referenced value directly.
+    pub(crate) async fn item_value<'c, T>(&self, item: &'c ItemRef) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        match self.send_item_value(item.id()).await? {
+            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::Ok {
+                value,
+                eval_time: _,
+            } => Ok(value),
+        }
+    }
+
     /// Execute a [`Script`] with an [`ItemRef`] as `self`
     pub(crate) async fn execute_with<'c, T>(
         &self,
@@ -318,6 +407,16 @@ impl Resolve {
         self.store(script).await
     }
 
+    pub(crate) async fn store_option_with<'c>(
+        &self,
+        item: &'c ItemRef,
+        script: impl Into<Script<'c>>,
+    ) -> Result<Option<ItemRef>, Error> {
+        let mut script = script.into();
+        script = script.with(item)?;
+        self.store_option(script).await
+    }
+
     pub(crate) async fn store_list_with<'c>(
         &self,
         item: &'c ItemRef,
@@ -327,6 +426,26 @@ impl Resolve {
         script = script.with(item)?;
         self.store_list(script).await
     }
+
+    /// Shutdowns the connected module.  
+    ///
+    /// Any other calls to this [`Resolve`] client and it's references will always return an [`Error::ModuleNotRunning`].
+    ///
+    /// # Safety
+    /// All functions become null and void and does nothing other than return errors.\
+    /// This function is normally called on [`Drop`]
+    pub unsafe fn close(&self) {
+        self.inner.shutdown();
+    }
+}
+
+impl InnerResolve {
+    /// Sends a shutdown packet to the module, aborts the ping/ping handler and sets the client to cancelled
+    pub(crate) fn shutdown(&self) {
+        let _ = Resolve::send_shutdown(&self.host);
+        self.ping_responder.abort();
+        *self.cancelled.write() = true;
+    }
 }
 
 /// Writes the saved `.dll` and the generated `.lua` script to a temp directory.
@@ -335,7 +454,11 @@ impl Resolve {
 ///
 /// # Errors
 /// If the lua module fails to reach *`DaVinci Resolve`* or for some other reason the lua module itself crashes before starting the http server.
-async fn start(temp_dir: &TempDir, config: &ResolveConfig) -> Result<(u16, JoinHandle<()>), Error> {
+async fn start(
+    temp_dir: &TempDir,
+    config: &ResolveConfig,
+    cancelled: Arc<RwLock<bool>>,
+) -> Result<(u16, JoinHandle<()>), Error> {
     let dll = temp_dir.path().join(format!("{MODULE_NAME}.dll"));
     write(&dll, LUA_MODULE).await?;
 
@@ -343,12 +466,19 @@ async fn start(temp_dir: &TempDir, config: &ResolveConfig) -> Result<(u16, JoinH
 
     let script = dll_script(temp_dir.path(), port);
     let script_path = temp_dir.path().join("script.lua");
+
+    #[cfg(feature = "tracing")]
+    tracing::trace!(script, "Startup script");
+
     write(&script_path, &script).await?;
 
-    spawn_script_server(&script_path).await?;
+    spawn_script_server(&script_path, cancelled).await?;
     let (mut stream, _addr) = listener.accept().await?;
 
     let port = handle_module_request(&mut stream, config).await?;
+
+    #[cfg(feature = "tracing")]
+    tracing::trace!(port, "Module started correctly, finished");
 
     let handle = start_ping_responder(stream).await;
 

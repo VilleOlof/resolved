@@ -1,8 +1,6 @@
-use std::{
-    ops::Deref,
-    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
-};
+use std::{ops::Deref, sync::Arc};
 
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use serde::de::DeserializeOwned;
 
 use crate::{Error, ItemRef, Resolve};
@@ -67,10 +65,8 @@ impl ItemRefList {
     where
         T: DeserializeOwned,
     {
-        self.read()
-            .source
-            .execute("return __resolved_table_keys(self)")
-            .await
+        let source = &self.read().source;
+        source.resolve().table_keys(&source).await
     }
 
     /// Returns a list of all [`ItemRef`]'s
@@ -91,23 +87,36 @@ impl ItemRefList {
         RefList { guard: self.read() }
     }
 
-    /// Takes the ownership of all references, leaving an empty list in it's place.
+    /// Returns the number of references stored in the list
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.read().refs.len()
+    }
+
+    /// Returns a [`Vec`] of the inner [`ItemRef`]'s.  
+    ///
+    /// # Safety
+    /// This function is `unsafe` since this can drastically hinder performance really easily.\
+    /// *(There's a reason this list is always wrapped when normally returned)*\
+    /// Unless you use [`ItemRefList::drop_all`] manually, each and every [`ItemRef`] will send a packet to drop itself in the module.\
+    /// This can block your usual execution in the background, slowing down your application.\
+    /// Only call this if you can take this performance hit or manually drop them in batches.
     #[inline]
     #[must_use]
-    pub fn take_list(&self) -> Vec<ItemRef> {
+    pub unsafe fn to_vec(&mut self) -> Vec<ItemRef> {
         std::mem::take(&mut self.write().refs)
     }
 
     /// Returns a read lock to the inner list value
     #[inline]
     pub(crate) fn read(&self) -> RwLockReadGuard<'_, LuaRefList> {
-        self.value.read().unwrap()
+        self.value.read()
     }
 
     /// Returns a write lock to the inner list value
     #[inline]
     pub(crate) fn write(&self) -> RwLockWriteGuard<'_, LuaRefList> {
-        self.value.write().unwrap()
+        self.value.write()
     }
 }
 
@@ -121,8 +130,10 @@ impl ItemRefList {
 impl Drop for LuaRefList {
     fn drop(&mut self) {
         let mut ids = std::mem::take(&mut self.refs);
+        // TODO: this does nothing as the strong count is still 2 so this gets filtered out
+        // and it sends its own DropItem packet
         ids.push(self.source.clone()); // unsure if this has a strong count of 2 when drop_all runs
-        ItemRefList::drop_all(self.source.resolve(), ids);
+        unsafe { ItemRefList::drop_all(self.source.resolve(), ids) };
     }
 }
 
@@ -135,7 +146,7 @@ impl ItemRefList {
     ///
     /// If an [`ItemRef`] satisfies this list, it will be marked as dropped to prevent it's own [`Drop`] from running.
     /// And then it will send a `DropMany` packet to drop all of the [`ItemRef`] in one packet.
-    pub(crate) fn drop_all(resolve: Resolve, refs: Vec<ItemRef>) {
+    pub unsafe fn drop_all(resolve: Resolve, refs: Vec<ItemRef>) {
         let to_drop: Vec<u64> = refs
             .into_iter()
             // if theres more than 1 strong count, we dont drop it as the other reference will drop it later
@@ -183,38 +194,4 @@ impl PartialEq for RefList<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.refs() == other.refs()
     }
-}
-
-#[tokio::test]
-async fn pair() -> Result<(), Error> {
-    let resolve = Resolve::new().await?;
-
-    let t = std::time::Instant::now();
-    let list = resolve
-        .store_list("return { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }")
-        .await?;
-    // let list = resolve
-    //     .store_table(r#"return { a = 1, b = 2, ["1"] = 3 }"#)
-    //     .await?;
-    let s = t.elapsed();
-    let t = std::time::Instant::now();
-    let mut some_id = 0;
-    for item in &list.list() {
-        some_id = item.id();
-        // println!("{:?}", item.execute::<i32>("return self").await?);.
-    }
-    let e = t.elapsed();
-    println!("new:{s:?}, iter:{e:?}");
-    let t = std::time::Instant::now();
-    let keys = list.keys::<i32>().await?;
-    println!("{:?} > keys:{:?}", t.elapsed(), keys);
-    drop(list);
-
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-
-    // make sure all items were actually dropped
-    let fake_item = unsafe { ItemRef::new(resolve, some_id) };
-    assert!(fake_item.execute::<()>("").await.is_err());
-
-    Ok(())
 }

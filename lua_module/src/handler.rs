@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use mlua::prelude::*;
 use resolved_shared::MsgPacket;
 
@@ -6,10 +8,8 @@ use crate::{
     error::RequestError,
     item_ref::ItemRefHandler,
     request::{Payload, serialize_values},
+    table_keys,
 };
-
-/// global variable name for self instances
-pub(crate) const SELF: &str = "self";
 
 /// Handles a specific request
 pub fn handle_req(
@@ -33,8 +33,12 @@ pub fn handle_req(
         MsgPacket::Store => {
             let (value, eval_time) =
                 payload.handle_script(lua, item_ref_handler, resolve, buffers)?;
+            if value.is_nil() {
+                return Ok(serialize_values(None::<u64>, eval_time)?);
+            }
+
             let id = item_ref_handler.insert(value)?;
-            Ok(serialize_values(id, eval_time)?)
+            Ok(serialize_values(Some(id), eval_time)?)
         }
         MsgPacket::DropItem => {
             let id = payload.u64()?;
@@ -61,10 +65,40 @@ pub fn handle_req(
         }
         MsgPacket::DropMany => {
             let len = payload.u32()?;
+
+            // we only save the latest err and continue try to clear all ids even if an earlier id fails
+            // we mostly want to save at least one err to show the user that something failed
+            let mut err = None;
             for _ in 0..len {
-                item_ref_handler.remove(payload.u64()?)?;
+                let id = payload.u64()?;
+                if let Err(e) = item_ref_handler.remove(id) {
+                    err = Some(e);
+                }
             }
+
+            if let Some(e) = err {
+                return Err(e);
+            }
+
             Ok(Vec::new())
+        }
+        MsgPacket::TableKeys => {
+            let id = payload.u64()?;
+            let value = item_ref_handler.get::<LuaValue>(id)?;
+            if !value.is_table() {
+                return Err(RequestError::NotATable(value.type_name()));
+            }
+            let table = value.as_table().unwrap();
+
+            let time = Instant::now();
+            let keys = table_keys(&table)?;
+            Ok(serialize_values(keys, time.elapsed())?)
+        }
+        MsgPacket::ItemValue => {
+            let id = payload.u64()?;
+            let time = Instant::now();
+            let value = item_ref_handler.get::<LuaValue>(id)?;
+            Ok(serialize_values(value, time.elapsed())?)
         }
     };
 }

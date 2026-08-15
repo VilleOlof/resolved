@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 
-use crate::{Error, ItemRef, Resolve, Script};
+use crate::{Error, ItemRef, ItemRefList, Resolve, Script};
 
 mod __seal__ {
     pub trait Sealed {}
@@ -14,8 +14,8 @@ impl __seal__::Sealed for crate::PooledResolve {}
 /// All types that you can call `.execute` on and run some lua code which returns the value.
 ///
 /// - [`Resolve`]
-/// - [`PooledResolve`]
 /// - [`ItemRef`]
+/// - [`PooledResolve`]
 pub trait ResolveExecute: __seal__::Sealed {
     fn execute<'c, T: DeserializeOwned + Send>(
         &'c self,
@@ -36,6 +36,16 @@ pub trait ResolveStore: __seal__::Sealed {
         &'c self,
         script: impl Into<Script<'c>> + Send,
     ) -> impl Future<Output = Result<ItemRef, Error>> + Send;
+
+    fn store_option<'c>(
+        &'c self,
+        script: impl Into<Script<'c>> + Send,
+    ) -> impl Future<Output = Result<Option<ItemRef>, Error>> + Send;
+
+    fn store_list<'c>(
+        &'c self,
+        script: impl Into<Script<'c>> + Send,
+    ) -> impl Future<Output = Result<ItemRefList, Error>> + Send;
 }
 
 macro_rules! impl_execute {
@@ -58,6 +68,20 @@ macro_rules! impl_store {
                 script: impl Into<Script<'c>> + Send
             ) -> impl Future<Output = Result<ItemRef, Error>> + Send {
                 self.store(script)
+            }
+
+            fn store_option<'c>(
+                &'c self,
+                script: impl Into<Script<'c>> + Send
+            ) -> impl Future<Output = Result<Option<ItemRef>, Error>> + Send {
+                self.store_option(script)
+            }
+
+            fn store_list<'c>(
+                &'c self,
+                script: impl Into<Script<'c>> + Send
+            ) -> impl Future<Output = Result<ItemRefList, Error>> + Send {
+                self.store_list(script)
             }
         }
     )*};

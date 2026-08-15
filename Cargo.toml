@@ -50,16 +50,20 @@ futures = "0.3"
 tempfile = "3"
 fastrand = "2.5"
 itoa = "1"
+parking_lot = "0.12"
 resolved_macros = { version = "0.1.0", path = "resolved_macros", optional = true }
+tracing = { version = "0.1", optional = true }
 
 [features]
 default = ["pool", "macros"]
 macros = ["dep:resolved_macros"]
 pool = []
+tracing = ["dep:tracing"]
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "time"] }
+tracing-subscriber = "0.3.0"
 
 [[bench]]
 name = "simple"

@@ -12,15 +12,27 @@ mod handler;
 mod item_ref;
 mod request;
 
+use crate::{
+    client::Client,
+    request::{Request, serialize_err},
+};
 use error::{ModuleError, RequestError};
 use handler::handle_req;
 use item_ref::ItemRefHandler;
 use resolved_shared::ResolveConfig;
 
-use crate::{
-    client::Client,
-    request::{Request, serialize_err},
-};
+/// The function the tiny starting lua script runs when loading this module
+const MODULE_ENTRY_FUNCTION: &str = "start";
+/// The function in the global scope that the Scripting API provides as the root
+const RESOLVE_ENTRY_POINT: &str = "Resolve";
+/// What ItemRefs and resolve client uses as their "own" context variable
+const GLOBAL_SELF: &str = "self";
+/// Nameless script arguments are pushed to this in globals
+const GLOBAL_ARG: &str = "arg";
+/// Global variable for the root of the Scripting API
+const GLOBAL_RESOLVE: &str = "resolve";
+/// Global function to sleep N milliseconds accurately
+const GLOBAL_SLEEP: &str = "sleep";
 
 type SharedClient = Arc<Mutex<Client>>;
 
@@ -28,7 +40,7 @@ type SharedClient = Arc<Mutex<Client>>;
 #[mlua::lua_module]
 fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
     let exports = lua.create_table()?;
-    exports.set("start", lua.create_function(start)?)?;
+    exports.set(MODULE_ENTRY_FUNCTION, lua.create_function(start)?)?;
     Ok(exports)
 }
 
@@ -65,7 +77,7 @@ fn sleep(_: &Lua, millis: u64) -> LuaResult<()> {
     Ok(())
 }
 
-fn table_keys(_: &Lua, table: LuaTable) -> LuaResult<Vec<LuaValue>> {
+fn table_keys(table: &LuaTable) -> LuaResult<Vec<LuaValue>> {
     let mut t = Vec::with_capacity(table.len()? as usize);
     for pair in table.pairs::<LuaValue, LuaValue>() {
         t.push(pair?.0);
@@ -77,11 +89,8 @@ fn table_keys(_: &Lua, table: LuaTable) -> LuaResult<Vec<LuaValue>> {
 fn _start(lua: &Lua, client: SharedClient, config: ResolveConfig) -> Result<(), ModuleError> {
     let globals_ref = lua.globals();
     let resolve = resolve(lua, client.clone())?;
-    globals_ref.set("resolve", &resolve)?;
-    globals_ref.set("sleep", lua.create_function(sleep)?)?;
-
-    // specific crate functions that we use to speed up ItemRefList
-    globals_ref.set("__resolved_table_keys", lua.create_function(table_keys)?)?;
+    globals_ref.set(GLOBAL_RESOLVE, &resolve)?;
+    globals_ref.set(GLOBAL_SLEEP, lua.create_function(sleep)?)?;
 
     lua.set_globals(globals_ref.clone())?;
 
@@ -149,7 +158,14 @@ fn ping_requester(client: SharedClient, timeout: Duration) {
 
 /// Returns the root of the Scripting API
 fn resolve(lua: &Lua, client: SharedClient) -> Result<LuaAnyUserData, ModuleError> {
-    match lua.load("return Resolve()").eval() {
+    let resolve_var = lua.globals().get::<LuaValue>(RESOLVE_ENTRY_POINT)?;
+    let resolve_fn = resolve_var
+        .as_function()
+        .ok_or(ModuleError::GlobalResolveWasNotAFunction(
+            resolve_var.type_name(),
+        ))?;
+
+    match resolve_fn.call::<LuaAnyUserData>(()) {
         Ok(r) => Ok(r),
         Err(e) => {
             client.lock().unwrap().write_noresolve()?;

@@ -88,9 +88,25 @@ impl ItemRef {
     /// Look at [`Resolve::store`] for more info on how it works.  
     ///
     /// # Errors
-    /// If the module executing the code fails or if the script can't be sent
+    /// If the module executing the code fails, if the script can't be sent or if the returned value is `nil`
     pub async fn store<'c>(&'c self, script: impl Into<Script<'c>>) -> Result<ItemRef, Error> {
         self.resolve().store_with(self, script).await
+    }
+
+    /// Maybe stores a reference to `Lua` value in `Rust`,
+    /// global variable `self` is set to the value stored in the [`ItemRef`].
+    ///
+    /// If the returned value is `nil`, this will return `None`.
+    ///
+    /// Look at [`store`](Resolve::store) for more info.
+    ///
+    /// Errors
+    /// If the module executing the code fails or if the script can't be sent
+    pub async fn store_option<'c>(
+        &'c self,
+        script: impl Into<Script<'c>>,
+    ) -> Result<Option<ItemRef>, Error> {
+        self.resolve().store_option_with(self, script).await
     }
 
     /// Store multiple references to `Lua` values in `Rust`,
@@ -117,7 +133,7 @@ impl ItemRef {
     where
         T: DeserializeOwned,
     {
-        self.execute("return self").await
+        self.resolve().item_value(self).await
     }
 
     /// Spawns a background task to drop the [`ItemRef`] in the module

@@ -25,6 +25,10 @@ pub enum Error {
         "Can't have ItemRef's has arguments when executing with a PooledResolve. This is since it doesn't implement '.store', thus no references can derive from it"
     )]
     CantHoldReferenceInPool,
+    #[error("The module for some reason was either shutdown or panic'd")]
+    ModuleNotRunning,
+    #[error("Tried to get a ItemRef but got nil")]
+    NilItemRef,
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

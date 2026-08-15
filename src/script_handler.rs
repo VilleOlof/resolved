@@ -2,9 +2,11 @@ use std::{
     env::{self, VarError},
     path::{Path, PathBuf},
     process::Stdio,
+    sync::Arc,
     time::Duration,
 };
 
+use parking_lot::RwLock;
 use resolved_shared::{PrePacket, ResolveConfig};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -58,13 +60,24 @@ pub(crate) fn fuscript() -> Result<PathBuf, Error> {
 pub(crate) async fn start_client_server() -> Result<(TcpListener, u16), Error> {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
+
+    #[cfg(feature = "tracing")]
+    tracing::trace!(port, "Started client server");
+
     Ok((listener, port))
 }
 
 /// Spawns the lua module using the scripting binary specified in [`fuscript`] and the script specified
-pub(crate) async fn spawn_script_server(script_path: &Path) -> Result<(), Error> {
+pub(crate) async fn spawn_script_server(
+    script_path: &Path,
+    cancelled: Arc<RwLock<bool>>,
+) -> Result<(), Error> {
     let fuscript = fuscript()?;
     let script_path = script_path.display().to_string();
+
+    #[cfg(feature = "tracing")]
+    tracing::trace!(?fuscript, "Starting module");
+
     tokio::spawn(async move {
         if let Err(e) = Command::new(fuscript)
             .arg("-q")
@@ -73,6 +86,7 @@ pub(crate) async fn spawn_script_server(script_path: &Path) -> Result<(), Error>
             .spawn()
         {
             eprintln!("{e:?}");
+            *cancelled.write() = true;
         }
     })
     .await?;
@@ -100,6 +114,10 @@ pub(crate) async fn handle_module_request(
             .await?;
         stream.write_u8(u8::from(config.reset_globals)).await?;
         stream.flush().await?;
+
+        #[cfg(feature = "tracing")]
+        tracing::trace!(?config, "Sent configuration");
+
         Ok(())
     }
 

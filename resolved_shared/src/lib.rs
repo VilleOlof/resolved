@@ -54,6 +54,11 @@ pub enum MsgPacket {
     StoreTable = 4,
     /// Drops a whole list of registry ids at once
     DropMany = 5,
+    /// Returns all keys from a table,
+    /// Used in `ItemRefList`
+    TableKeys = 6,
+    /// Returns the value stored in an `ItemRef`
+    ItemValue = 7,
 }
 
 impl MsgPacket {
@@ -66,6 +71,8 @@ impl MsgPacket {
             3 => Self::Shutdown,
             4 => Self::StoreTable,
             5 => Self::DropMany,
+            6 => Self::TableKeys,
+            7 => Self::ItemValue,
             _ => return None,
         })
     }
