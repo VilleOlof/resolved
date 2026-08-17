@@ -7,5 +7,5 @@ $LUA_PATH = Resolve-Path "prebuilt"
 $env:LUA_LIB = $LUA_PATH
 
 # then use that to compile it with mlua in the lua module
-cargo build --package lua_module --release
-Copy "target/release/lua_module.dll" "prebuilt/lua_module.dll"
+cargo build --package lua_module --profile lua
+Copy "target/lua/lua_module.dll" "prebuilt/lua_module.dll"

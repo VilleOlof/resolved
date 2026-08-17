@@ -60,13 +60,22 @@ impl ItemRef {
     #[inline]
     #[must_use]
     pub(crate) fn is_dropped(&self) -> bool {
-        *self.value.dropped.read().unwrap()
+        *self
+            .value
+            .dropped
+            .read()
+            .expect("itemref.dropped was poisoned")
     }
 
     /// Returns the [`Resolve`] instance which this [`ItemRef`] was taken from.
     #[inline]
+    #[must_use]
     pub(crate) fn resolve(&self) -> Resolve {
-        self.value.resolve.as_ref().unwrap().clone()
+        self.value
+            .resolve
+            .as_ref()
+            .expect("resolve was taken from itemref")
+            .clone()
     }
 
     /// Execute some `lua` code, setting `self` to the stored reference value and returning what the code returned.
@@ -155,13 +164,29 @@ impl ItemRef {
             eprintln!("failed to drop item ref: {e:?}");
         }
     }
+
+    /// Creates a so called `phantom` [`ItemRef`].  
+    ///
+    /// This reference doesn't exist in the module, it's `id` will never* get reached,
+    /// and it has already been "dropped" in the client.
+    #[inline]
+    #[must_use]
+    pub(crate) fn phantom(resolve: Resolve) -> Self {
+        ItemRef {
+            value: Arc::new(LuaRef {
+                id: u64::MAX,
+                resolve: Some(resolve),
+                dropped: RwLock::new(true),
+            }),
+        }
+    }
 }
 
 impl Drop for LuaRef {
     fn drop(&mut self) {
-        let dropped = { *self.dropped.read().unwrap() };
+        let dropped = { *self.dropped.read().expect("itemref.dropped was poisoned") };
         if !dropped {
-            *self.dropped.write().unwrap() = true;
+            *self.dropped.write().expect("itemref.dropped was poisoned") = true;
             let resolve = std::mem::take(&mut self.resolve).expect("resolve must exist on drop");
             ItemRef::sync_manual_drop(resolve, self.id);
         }

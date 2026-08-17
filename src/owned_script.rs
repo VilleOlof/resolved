@@ -1,8 +1,8 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Duration};
 
 use serde::Serialize;
 
-use crate::{Error, ItemRef, Script, script::ArgData};
+use crate::{Error, ItemRef, Script, packet::DEFAULT_PACKET_TIMEOUT, script::ArgData};
 
 /// An `Owned` variant of [`Script`]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -10,6 +10,7 @@ pub struct OwnedScript {
     pub(crate) lua: String,
     pub(crate) args: Vec<OwnedArgData>,
     pub(crate) with: Option<ItemRef>,
+    pub(crate) timeout: Duration,
 }
 
 /// An `Owned` variant of [`Arg`]
@@ -29,6 +30,7 @@ impl OwnedScript {
             lua: lua_script.into(),
             with: None,
             args: Vec::new(),
+            timeout: DEFAULT_PACKET_TIMEOUT,
         }
     }
 
@@ -141,6 +143,7 @@ impl Script<'_> {
             lua: self.lua.to_string(),
             args: self.args.iter().map(ArgData::as_owned).collect(),
             with: self.with.cloned(),
+            timeout: self.timeout,
         }
     }
 }
@@ -153,6 +156,7 @@ impl OwnedScript {
             lua: Cow::Borrowed(&self.lua),
             args: self.args.iter().map(|x| x.as_ref()).collect(),
             with: self.with.as_ref(),
+            timeout: self.timeout,
         }
     }
 }

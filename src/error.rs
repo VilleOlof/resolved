@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::script_handler::MODULE_TIMEOUT;
 
 /// Any error that can occur while using `resolved`
@@ -20,7 +22,7 @@ pub enum Error {
     #[error(
         "Tried to use an ItemRef on a foreign Resolve instance whose id didn't match: {0} != {1}"
     )]
-    MismatchedItemRef(u64, u64),
+    MismatchedItemRef(u32, u32),
     #[error(
         "Can't have ItemRef's has arguments when executing with a PooledResolve. This is since it doesn't implement '.store', thus no references can derive from it"
     )]
@@ -29,6 +31,12 @@ pub enum Error {
     ModuleNotRunning,
     #[error("Tried to get a ItemRef but got nil")]
     NilItemRef,
+    #[error(
+        "Tried to execute a script and didn't recieve a response within the timeout window: {0:?}"
+    )]
+    ScriptTimeout(Duration),
+    #[error("Waited, got flag: {1:?} but expected {0:?}")]
+    InvalidPipeFlag(u8, u8),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -46,4 +54,8 @@ pub enum Error {
     FromUtf8(#[from] std::string::FromUtf8Error),
     #[error(transparent)]
     TryFromInt(#[from] std::num::TryFromIntError),
+    #[error(transparent)]
+    Shmem(#[from] resolved_shared::ShmemError),
+    #[error(transparent)]
+    ShmemData(#[from] resolved_shared::ShmemDataError),
 }

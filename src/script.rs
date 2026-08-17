@@ -1,10 +1,9 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Duration};
 
-use bytes::{BufMut, BytesMut};
 use resolved_shared::ArgType;
 use serde::Serialize;
 
-use crate::{Error, ItemRef, owned_script::OwnedScript};
+use crate::{Error, ItemRef, owned_script::OwnedScript, packet::DEFAULT_PACKET_TIMEOUT};
 
 /// A piece of lua code with optional arguments.
 ///
@@ -48,7 +47,7 @@ use crate::{Error, ItemRef, owned_script::OwnedScript};
 /// let value: i32 = resolve.execute(script).await?;
 /// assert_eq!(20, value);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Script<'c> {
     /// The code to be loaded and executed in the lua module
     pub(crate) lua: Cow<'c, str>,
@@ -57,6 +56,20 @@ pub struct Script<'c> {
     /// An optional [`ItemRef`] which `self` will be set to if specified.\
     /// Can only be set by [`execute_with`](crate::Resolve::execute_with)/[`store_with`](crate::Resolve::store_with) functions on [`Resolve`](crate::Resolve)
     pub(crate) with: Option<&'c ItemRef>,
+    /// Timeout for the scripts execution time.
+    /// The time for the module to send back a response
+    pub(crate) timeout: Duration,
+}
+
+impl Default for Script<'_> {
+    fn default() -> Self {
+        Script {
+            lua: Cow::default(),
+            args: Vec::default(),
+            with: Option::default(),
+            timeout: DEFAULT_PACKET_TIMEOUT,
+        }
+    }
 }
 
 /// The different types of argument.  
@@ -103,13 +116,23 @@ impl<'c> Script<'c> {
             lua: lua_script.into(),
             with: None,
             args: Vec::with_capacity(arg_cap),
+            timeout: DEFAULT_PACKET_TIMEOUT,
         }
     }
 
-    /// Returns an estimation on how many bytes the serialized variant of this [`Script`] will be
+    /// The timeout on the scripts execution
     #[inline]
-    pub(crate) fn size_hint(&self) -> usize {
-        self.lua.len() + (8 * self.args.len())
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// Changes the timeout of the scrips execution
+    ///
+    /// Note that if your script hangs or
+    #[inline]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     /// If we add a `with` [`ItemRef`], we need to validate that no previous pushed arguments have mismatched resolve ids
@@ -199,55 +222,6 @@ impl<'c> Script<'c> {
     #[inline]
     pub(crate) fn ser<S: Serialize>(value: &S) -> Result<Vec<u8>, Error> {
         Ok(rmp_serde::to_vec(value)?)
-    }
-
-    /// Packs the [`Script`] into a serialized format.  
-    ///
-    /// `[if_with:u8,ref_id_if_with]`,
-    /// `[str_len:u32;lua_script_str]`,
-    /// `[args_len:u32]`,
-    ///     `[arg_type:u8;arg_data]`,
-    ///
-    /// where `arg_data` can be just a value, a u64 for a ref, a len-prefixed string+value or len-prefixed string+u64
-    pub(crate) fn serialize(self) -> Result<Vec<u8>, Error> {
-        fn string(data: &mut BytesMut, str: &str) -> Result<(), Error> {
-            data.put_u32(u32::try_from(str.len())?);
-            data.put(str.as_bytes());
-            Ok(())
-        }
-
-        let mut data = BytesMut::new();
-
-        data.put_u8(u8::from(self.with.is_some()));
-        if let Some(item) = self.with {
-            data.put_u64(item.id());
-        }
-
-        string(&mut data, &self.lua)?;
-        data.put_u32(u32::try_from(self.args.len())?);
-
-        for arg in self.args {
-            data.put_u8(arg.arg_type());
-
-            match arg {
-                ArgData::Arg(arg) => {
-                    data.put_u32(u32::try_from(arg.len())?);
-                    data.put(&arg[..]);
-                }
-                ArgData::ArgRef(arg) => data.put_u64(arg.id()),
-                ArgData::NamedArg { key, value } => {
-                    string(&mut data, key)?;
-                    data.put_u32(u32::try_from(value.len())?);
-                    data.put(&value[..]);
-                }
-                ArgData::NamedArgRef { key, value } => {
-                    string(&mut data, key)?;
-                    data.put_u64(value.id());
-                }
-            }
-        }
-
-        Ok(data.to_vec())
     }
 }
 

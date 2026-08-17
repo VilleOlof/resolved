@@ -1,20 +1,20 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use futures::future::join_all;
 use resolved::{OwnedScript, PooledResolve, Resolve, ResolveConfig, Script};
-use std::{hint::black_box, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 const NOOP: &str = "";
 const SLEEP: &str = "sleep(10)";
 const LENGTHY: &str = r#"
-local a = 57 + 12
-local b = a + 41
-local c = "aaaa" .. "bbbb"
-local d = a * b
-local e = c .. "cccc"
-function add(a, b)
-    return a + b
-end
-local f = add(5, 1)
+    local a = 57 + 12
+    local b = a + 41
+    local c = "aaaa" .. "bbbb"
+    local d = a * b
+    local e = c .. "cccc"
+    function add(a, b)
+        return a + b
+    end
+    local f = add(5, 1)
 "#;
 
 async fn run_n<'s>(resolve: &Resolve, n: usize, script: impl Into<Script<'s>>) {
@@ -31,9 +31,7 @@ async fn pool_n<'c>(pool: &PooledResolve, n: usize, script: impl Into<OwnedScrip
         let p = pool.clone();
         let script = script.clone();
         handles.push(tokio::spawn(async move {
-            // TODO: this function someetimes, when it just fucking feels like it
-            // will panic with: called `Result::unwrap()` on an `Err` value: Io(Os { code: 10048, kind: AddrInUse, message: "Only one usage of each socket address (protocol/network address/port) is normally permitted." })
-            p.execute::<()>(script.as_ref()).await.unwrap();
+            p.execute::<()>(script.as_ref()).await.unwrap()
         }));
     }
     join_all(handles).await;
@@ -78,19 +76,19 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.to_async(&rt).iter(|| run_n(&resolve, 64, NOOP));
     });
 
-    // exec.bench_function("pool2_1", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 1, NOOP));
-    // });
-    // exec.bench_function("pool2_64", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 64, NOOP));
-    // });
+    exec.bench_function("pool2_1", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_2, 1, NOOP));
+    });
+    exec.bench_function("pool2_64", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_2, 64, NOOP));
+    });
 
-    // exec.bench_function("pool8_1", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 1, NOOP));
-    // });
-    // exec.bench_function("pool8_64", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 64, NOOP));
-    // });
+    exec.bench_function("pool8_1", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_8, 1, NOOP));
+    });
+    exec.bench_function("pool8_64", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_8, 64, NOOP));
+    });
     exec.finish();
 
     let resolve = rt.block_on(async { Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap() });
@@ -111,40 +109,49 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.to_async(&rt).iter(|| run_n(&resolve, 64, SLEEP));
     });
 
-    // work.bench_function("pool2_1", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 1, SLEEP));
-    // });
-    // work.bench_function("pool2_64", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_2, 64, SLEEP));
-    // });
+    work.bench_function("pool2_1", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_2, 1, SLEEP));
+    });
+    work.bench_function("pool2_64", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_2, 64, SLEEP));
+    });
 
-    // work.bench_function("pool8_1", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 1, SLEEP));
-    // });
-    // work.bench_function("pool8_64", |b| {
-    //     b.to_async(&rt).iter(|| pool_n(&pool_8, 64, SLEEP));
-    // });
+    work.bench_function("pool8_1", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_8, 1, SLEEP));
+    });
+    work.bench_function("pool8_64", |b| {
+        b.to_async(&rt).iter(|| pool_n(&pool_8, 64, SLEEP));
+    });
     work.finish();
 
     let mut create = c.benchmark_group("create");
-    create.sample_size(20);
+    create.sample_size(50);
 
+    // we push all instances here so the drop impl on the fields dont run until after
+    // the drop removes files and does cleaning which slows heavily down the benchmarking by over twice as slow
+    // and is not really what we want, we just wanna see times for creation, not dropping
+    let instances = Arc::new(tokio::sync::Mutex::new(vec![]));
     create.bench_function("resolve", |b| {
         b.to_async(&rt).iter(|| async {
-            black_box(Resolve::new().await.unwrap());
+            let r = Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap();
+            {
+                instances.lock().await.push(r);
+            }
         });
     });
+    let _ = instances;
 
-    create.bench_function("pool1", |b| {
-        b.to_async(&rt).iter(|| async {
-            black_box(PooledResolve::new(1).await.unwrap());
-        });
-    });
-    create.bench_function("pool4", |b| {
-        b.to_async(&rt).iter(|| async {
-            black_box(PooledResolve::new(4).await.unwrap());
-        });
-    });
+    // these spike your cpu to 100% and freezes shit, spooky for now
+    // create.bench_function("pool1", |b| {
+    //     b.to_async(&rt).iter(|| async {
+    //         black_box(PooledResolve::new(1).await.unwrap());
+    //     });
+    // });
+    // create.bench_function("pool4", |b| {
+    //     b.to_async(&rt).iter(|| async {
+    //         black_box(PooledResolve::new(4).await.unwrap());
+    //     });
+    // });
     create.finish();
 }
 

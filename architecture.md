@@ -32,15 +32,16 @@ We only start `fuscript.exe` once since we dont want to deal with it's startup t
 Once the Scripting API has started we run our own lua module which never exits until the client drops or dies.  
 
 This module communicates with the client to agree on some configuration,  
-in the process the module binds to a random available port and sends that back to the client.  
+in the process the module connects to two named pipes for transmitting some data but mostly simple 1 byte events.  
 
 The modules work is to maintain references to lua-only values with it's `ItemRefHandler`.  
 And to set script arguments so when the script actually loads and runs it has all the context it needs.  
 
-The module has a lifetime bound to the client, when the client drops it sends a shutdown signal to the module.  
-Or if the module doesnt recieve a pong back from the client it will self terminate to not be left hanging.
+The module has a lifetime bound to the client, when the client drops it also terminates the pipes and kills the module child.  
 
-Once the startup has been done, the module starts its `TcpListener` that the client will request to for all user packets.  
+Once the startup has been done, the module connects to it's second named pipe and waits for an event to signal it.  
+When this event comes through the module can begin to read from the shared memory between the two processes to work on the request.  
+After it's been done it can signal back to the client so it can read the response in the shared memory.
 
 ### Lua version
 
@@ -61,9 +62,10 @@ Through the client, it also starts the module itself as a child process to the c
 When starting the client, it will create a temporary directory to write some files in.  
 This directory contains the lua script to pass to `fuscript` later,  
 but notably this directory also contains the `lua_module.dll` which is our entire custom rust lua module.  
-This file needs to be in a place where the lua script can find it and properly load it
+This file needs to be in a place where the lua script can find it and properly load it.  
+This directory is also home to the file descriptor for our shared memory between the crate and child module.
 
-Every client also has a random u64 id (random enough for us),  
+Every client also has a random u32 id (random enough for us),  
 which identifies this specific client and it's module connection.  
 When we get a `ItemRef` from a `.store` function, that item holds onto its derived client.  
 Meaning that when it gets used again, the client will check `ItemRef`'s derived resolve id to see if it matches.  
@@ -71,13 +73,21 @@ If they dont, the item reference is from another lua vm context and arent valid 
 
 Once the client has spawned `fuscript` and it has now started our module.  
 We can send our provided configuration to the module so it can properly setup and get ready for incoming requests.  
-Once the module is ready the module sends a ready packet indicating that we,  
-the client and finally return the client back to the consumer of the crate to use.  
+Once the module is ready the module connects to the second named pipe, indicating that it's now ready for events.  
+now, we the client can finally return the client back to the consumer of the crate to use.  
 
 When the consumer wants to execute a `Script` object, we serialize it and send a packet to the module.  
 this packet contains our entire serialized script and it's optional argument values.  
 
 After module has done its things, the returned value is deserialized and sent to the consumer back.  
+
+## Shared memory
+
+For performance, and since only our client and its linked module will ever ever need to communicate.  
+We can share some memory between the two processes to send requests and responses without having to deal with a network stack.  
+To signal each other that they can safely read the memory, we use named pipes to signal events to each other.  
+Along side the pipes, the shared memory's first byte indicate which process "owns" the current memory.  
+If this byte is ever mismatched when trying to read from it, that side will panic instantly and not attempt to read further.
 
 ## Script
 
@@ -87,6 +97,8 @@ before loading and running the lua script.
 
 Nameless arguments are pushed to `arg` as a sequence.  
 And named arguments are simply added as global variables.
+
+The timout for the execution can be set on a script per script basis as some may take longer than others.  
 
 ## ItemRef
 
@@ -112,22 +124,24 @@ all resolve objects are thus also a userdata object, which we for sure cannot se
     - Creates a temporary directory to write the module dll and lua script to
     - Starts the client server for pre request communication
     - Generates a unique id to this `Resolve` instance to hinder misuse of `ItemRef`'s
-    - Spawns `fuscript` with the port of it's client server formatted into the lua script  
+    - Spawns `fuscript` with the internal id of the client into the lua script (for use when connecting to a named pipe).  
     - Module recieves the client configuration and sets up the module for the client to further connect
-    - Starts the ping/pong handlers, so the module can ensure it's linked client is always alive
+    - Module connects to the second named pipe thats for requests, which indicate that its ready
 - Building a `Script` object with some lua code and optional arguments to pass along with it  
 - The client runs `.execute`  
-    - The client packs the `Script` object and sends it to a new connection to the module  
+    - The client packs the `Script` object and writes it to the shared memory  
         - If the client used a `.execute_with` function this will also attach the `ItemRef` to the script  
             - This also validates that the references match the same internal `Resolve` instance
+    - The client then signals a 1 byte event via named pipes so the module knows to begin handling it.  
     - Module recieves the `Script` and it's payload  
         - Optionally resets the global table
         - It sets up globals, self references and loads the script
         - Executes the lua code  
         - Saves the execution time of the script  
-        - Sends back the returned `LuaValue`, serialized into a buffer
+        - Writes back the returned `LuaValue`, serialized into a buffer  
+        - Module signals it's 1 byte event so the client knows its done  
     - Client recieves the results of the executed lua script  
-        - Deserializes it into T & returns it
+        - Deserializes it into `T` & returns it
 
 ## Helpers
 

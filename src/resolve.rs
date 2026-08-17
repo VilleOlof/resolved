@@ -1,26 +1,35 @@
-use std::{
-    fmt::Debug,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::Arc,
-};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 use parking_lot::RwLock;
-use resolved_shared::{ResolveConfig, ScriptResponse};
+use resolved_shared::{PipeTokio, ResolveConfig, ScriptResponse};
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 use tokio::{
     fs::write,
+    process::Child,
     sync::{Mutex, MutexGuard},
-    task::JoinHandle,
 };
 
 use crate::{
     Error, ItemRef, ItemRefList, Script,
+    packet::ShmemClient,
     script_handler::{
         LUA_MODULE, MODULE_NAME, dll_script, handle_module_request, spawn_script_server,
-        start_client_server, start_ping_responder,
+        write_config,
     },
 };
+
+macro_rules! log_script_resposne {
+    ($script:expr, $eval:expr, $name:literal) => {
+        #[cfg(feature = "tracing")]
+        {
+            let args = $script.args.len();
+            let with = &$script.with;
+            let script = &$script.lua;
+            tracing::trace!(eval_time = ?$eval, ?args, ?with, ?script, $name);
+        }
+    };
+}
 
 /// A connection to *`DaVinci Resolve`*.
 ///
@@ -53,45 +62,31 @@ pub struct Resolve {
 #[derive(Debug)]
 struct InnerResolve {
     /// The unique id for this specific instance and connection to `DaVinci Resolve`
-    id: u64,
-    /// The host to connect to the lua module linked to this instance
-    host: SocketAddr,
-    /// Buffers while reading and writing packets
-    buffers: Mutex<Buffers>,
+    id: u32,
     /// We just hold onto this so it doesnt run its Drop function and remove the files until Resolve is dropped
     _temp_dir: TempDir,
-    /// We need to store the handle to the background task that responds to pings from the lua module,
-    /// so we can properly abort the task when this instance is dropped
-    ping_responder: JoinHandle<()>,
     /// If the module was shutdown or if the module in someway shutdown, this is set to `true`
     cancelled: Arc<RwLock<bool>>,
+    /// Instances of the shared memory and pipe used for requests
+    packet_handler: Mutex<PacketHandler>,
+    /// The pipe used for setting up the module
+    _module_pipe: PipeTokio,
+    /// The script binary that holds the module
+    child: Child,
 }
 
-/// Internal buffers that [`Resolve`] can reuse to save allocations
-#[derive(Default)]
-pub(crate) struct Buffers {
-    pub(crate) packet_write: Vec<u8>,
-    pub(crate) packet_read: Vec<u8>,
-}
-
-impl Buffers {
-    pub(crate) fn clear_all(&mut self) {
-        self.packet_write.clear();
-        self.packet_read.clear();
-    }
-}
-
-impl Debug for Buffers {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // we dont want to spam Debug display with shit ton of the latest bytes
-        f.write_str("<Buffers>")
-    }
+#[derive(Debug)]
+pub(crate) struct PacketHandler {
+    pub(crate) shmem: ShmemClient,
+    pub(crate) pipe: PipeTokio,
 }
 
 // when the inner arc'd resolve instance is fully dropped then we can discard the module and bg tasks
 impl Drop for InnerResolve {
     fn drop(&mut self) {
-        self.shutdown();
+        self.cancel();
+        // just try to kill the module in anyway possible:
+        let _ = self.child.start_kill();
     }
 }
 
@@ -127,7 +122,10 @@ impl Resolve {
     /// - The setup server communication fails
     /// - The module startup fails
     pub async fn new_with_config(config: &ResolveConfig) -> Result<Self, Error> {
-        let id = fastrand::u64(..);
+        #[cfg(feature = "tracing")]
+        let creation_time = std::time::Instant::now();
+
+        let id = fastrand::u32(..);
 
         #[cfg(feature = "tracing")]
         let span = tracing::trace_span!("new_resolve", id);
@@ -144,18 +142,27 @@ impl Resolve {
 
         let cancelled = Arc::new(RwLock::new(false));
 
-        let (port, ping_responder) = start(&temp_dir, config, cancelled.clone()).await?;
-        let host = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
-        let buffers = Mutex::new(Buffers::default());
+        let shmem_path = temp_dir.path().join("shmem");
+        let shmem = ShmemClient::new(&shmem_path)?;
+
+        let (child, module_pipe, pipe) =
+            start(&temp_dir, config, cancelled.clone(), id, &shmem_path).await?;
+
+        let packet_handler = Mutex::new(PacketHandler { shmem, pipe });
+
+        #[cfg(feature = "tracing")]
+        let creation_time = creation_time.elapsed();
+        #[cfg(feature = "tracing")]
+        tracing::trace!(?creation_time, "Created resolve client");
 
         Ok(Self {
             inner: Arc::new(InnerResolve {
                 id,
-                buffers,
-                host,
                 _temp_dir: temp_dir,
-                ping_responder,
                 cancelled,
+                packet_handler,
+                _module_pipe: module_pipe,
+                child,
             }),
         })
     }
@@ -163,13 +170,8 @@ impl Resolve {
     /// Returns a unique `id` to this specific [`Resolve`] instance, can be used to check if two instances are the same or not.
     #[inline]
     #[must_use]
-    pub fn id(&self) -> u64 {
+    pub fn id(&self) -> u32 {
         self.inner.id
-    }
-
-    #[inline]
-    pub(crate) fn host(&self) -> SocketAddr {
-        self.inner.host
     }
 
     #[inline]
@@ -178,10 +180,8 @@ impl Resolve {
     }
 
     #[inline]
-    pub(crate) async fn buffers(&self) -> MutexGuard<'_, Buffers> {
-        let mut buffers = self.inner.buffers.lock().await;
-        buffers.clear_all();
-        buffers
+    pub(crate) async fn packet_handler(&self) -> MutexGuard<'_, PacketHandler> {
+        self.inner.packet_handler.lock().await
     }
 
     /// Execute some `lua` code, the returned value in the code will be returned here.  
@@ -232,12 +232,17 @@ impl Resolve {
     where
         T: DeserializeOwned,
     {
-        match self.send_execute(script.into()).await? {
+        let script = script.into();
+        match self.send_execute(&script).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::Ok {
                 value,
-                eval_time: _,
-            } => Ok(value),
+                #[allow(unused_variables)]
+                eval_time,
+            } => {
+                log_script_resposne!(script, eval_time, "execute");
+                Ok(value)
+            }
         }
     }
 
@@ -278,15 +283,20 @@ impl Resolve {
         &self,
         script: impl Into<Script<'_>>,
     ) -> Result<Option<ItemRef>, Error> {
-        match self.send_store(script.into()).await? {
+        let script = script.into();
+        match self.send_store(&script).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::Ok {
                 value,
-                eval_time: _,
-            } => Ok(match value {
-                Some(v) => Some(unsafe { ItemRef::new(self.clone(), v) }),
-                None => None,
-            }),
+                #[allow(unused_variables)]
+                eval_time,
+            } => {
+                log_script_resposne!(script, eval_time, "store");
+                Ok(match value {
+                    Some(v) => Some(unsafe { ItemRef::new(self.clone(), v) }),
+                    None => None,
+                })
+            }
         }
     }
 
@@ -320,17 +330,22 @@ impl Resolve {
     /// If the module executing the code fails or if the script can't be sent.\
     /// Or if the returned value from lua was not a *table*
     pub async fn store_list(&self, script: impl Into<Script<'_>>) -> Result<ItemRefList, Error> {
-        match self.send_store_table(script.into()).await? {
+        let script = script.into();
+        match self.send_store_table(&script).await? {
             resolved_shared::ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             resolved_shared::ScriptResponse::Ok {
                 value: (source, list),
-                eval_time: _,
-            } => Ok(ItemRefList::new(
-                unsafe { ItemRef::new(self.clone(), source) },
-                list.into_iter()
-                    .map(|x| unsafe { ItemRef::new(self.clone(), x) })
-                    .collect(),
-            )),
+                #[allow(unused_variables)]
+                eval_time,
+            } => {
+                log_script_resposne!(script, eval_time, "store_list");
+                Ok(ItemRefList::new(
+                    unsafe { ItemRef::new(self.clone(), source) },
+                    list.into_iter()
+                        .map(|x| unsafe { ItemRef::new(self.clone(), x) })
+                        .collect(),
+                ))
+            }
         }
     }
 
@@ -434,16 +449,16 @@ impl Resolve {
     /// # Safety
     /// All functions become null and void and does nothing other than return errors.\
     /// This function is normally called on [`Drop`]
-    pub unsafe fn close(&self) {
-        self.inner.shutdown();
+    pub async unsafe fn shutdown(&self) -> Result<(), Error> {
+        self.send_shutdown().await?;
+        self.inner.cancel();
+        Ok(())
     }
 }
 
 impl InnerResolve {
-    /// Sends a shutdown packet to the module, aborts the ping/ping handler and sets the client to cancelled
-    pub(crate) fn shutdown(&self) {
-        let _ = Resolve::send_shutdown(&self.host);
-        self.ping_responder.abort();
+    /// Writes to the internal state that it's cancelled
+    pub(crate) fn cancel(&self) {
         *self.cancelled.write() = true;
     }
 }
@@ -458,13 +473,16 @@ async fn start(
     temp_dir: &TempDir,
     config: &ResolveConfig,
     cancelled: Arc<RwLock<bool>>,
-) -> Result<(u16, JoinHandle<()>), Error> {
+    id: u32,
+    shmem_path: &Path,
+) -> Result<(Child, PipeTokio, PipeTokio), Error> {
+    let module_pipe = resolved_shared::new_module_pipe(id)?;
+    let pipe = resolved_shared::new_pipe(id)?;
+
     let dll = temp_dir.path().join(format!("{MODULE_NAME}.dll"));
     write(&dll, LUA_MODULE).await?;
 
-    let (listener, port) = start_client_server().await?;
-
-    let script = dll_script(temp_dir.path(), port);
+    let script = dll_script(temp_dir.path(), id);
     let script_path = temp_dir.path().join("script.lua");
 
     #[cfg(feature = "tracing")]
@@ -472,15 +490,18 @@ async fn start(
 
     write(&script_path, &script).await?;
 
-    spawn_script_server(&script_path, cancelled).await?;
-    let (mut stream, _addr) = listener.accept().await?;
-
-    let port = handle_module_request(&mut stream, config).await?;
+    let child = spawn_script_server(&script_path, cancelled).await?;
+    let mut module_pipe = module_pipe.accept().await?;
 
     #[cfg(feature = "tracing")]
-    tracing::trace!(port, "Module started correctly, finished");
+    tracing::trace!("Module pipe connected");
 
-    let handle = start_ping_responder(stream).await;
+    write_config(&mut module_pipe, config, shmem_path).await?;
 
-    Ok((port, handle))
+    let pipe = handle_module_request(&mut module_pipe, pipe).await?;
+
+    #[cfg(feature = "tracing")]
+    tracing::trace!("Module started correctly, finished");
+
+    Ok((child, module_pipe, pipe))
 }

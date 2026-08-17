@@ -1,7 +1,7 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener},
+    io::{Read, Write},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use mlua::prelude::*;
@@ -10,16 +10,14 @@ mod client;
 mod error;
 mod handler;
 mod item_ref;
+mod reader;
 mod request;
 
-use crate::{
-    client::Client,
-    request::{Request, serialize_err},
-};
+use crate::{client::Client, reader::ShmemReader, request::serialize_err};
 use error::{ModuleError, RequestError};
 use handler::handle_req;
 use item_ref::ItemRefHandler;
-use resolved_shared::ResolveConfig;
+use resolved_shared::{ModuleConfig, PipeFlag, ShmemConf, ShmemData, shmem_struct};
 
 /// The function the tiny starting lua script runs when loading this module
 const MODULE_ENTRY_FUNCTION: &str = "start";
@@ -33,6 +31,7 @@ const GLOBAL_ARG: &str = "arg";
 const GLOBAL_RESOLVE: &str = "resolve";
 /// Global function to sleep N milliseconds accurately
 const GLOBAL_SLEEP: &str = "sleep";
+const RESOLVE_FLAGS: &str = "__flags";
 
 type SharedClient = Arc<Mutex<Client>>;
 
@@ -45,14 +44,19 @@ fn vinci(lua: &Lua) -> LuaResult<LuaTable> {
 }
 
 /// Starts off the entire module from the lua script, the port should be the port of the client crate's client_server
-fn start(lua: &Lua, port: u16) -> LuaResult<()> {
-    let mut client = Client::new(port).unwrap();
-    let config = client.read_config().unwrap();
+fn start(lua: &Lua, id: u32) -> LuaResult<()> {
+    let mut client = Client::new(id).expect("failed to init client");
+
+    let config = client.read_config().expect("failed to read configuration");
     let client = Arc::new(Mutex::new(client));
-    match _start(lua, client.clone(), config) {
+    match _start(lua, id, client.clone(), config) {
         Ok(unit) => Ok(unit),
         Err(e) => {
-            client.lock().unwrap().write_err(e.to_string()).unwrap();
+            // this will error if pipe is closed
+            let _ = client
+                .lock()
+                .expect("client was poisoned")
+                .write_err(e.to_string());
             match e {
                 ModuleError::Lua(l) => Err(l),
                 other => Err(LuaError::external(other)),
@@ -86,7 +90,12 @@ fn table_keys(table: &LuaTable) -> LuaResult<Vec<LuaValue>> {
 }
 
 /// The real start functions once the outer one has connected to the module and gathered the configuration
-fn _start(lua: &Lua, client: SharedClient, config: ResolveConfig) -> Result<(), ModuleError> {
+fn _start(
+    lua: &Lua,
+    id: u32,
+    client: SharedClient,
+    config: ModuleConfig,
+) -> Result<(), ModuleError> {
     let globals_ref = lua.globals();
     let resolve = resolve(lua, client.clone())?;
     globals_ref.set(GLOBAL_RESOLVE, &resolve)?;
@@ -94,66 +103,54 @@ fn _start(lua: &Lua, client: SharedClient, config: ResolveConfig) -> Result<(), 
 
     lua.set_globals(globals_ref.clone())?;
 
-    let host = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-    let server = TcpListener::bind(host)?;
-
-    let module_port = server.local_addr()?.port();
-    {
-        client.lock().unwrap().write_port(module_port)?;
-    }
-
-    ping_requester(client.clone(), config.timeout);
-
     let mut item_ref_handler = ItemRefHandler::new(lua);
     let mut buffers = Buffers::default();
+    let mut shmem = ShmemModule::new(&config.shmem_path)?;
 
-    for stream in server.incoming() {
-        let mut request = Request::new(stream?);
+    let mut pipe = resolved_shared::connect_pipe(id)?;
+    let mut wait_buf = [0u8; 1];
+
+    loop {
+        if let Err(e) = pipe.read_exact(&mut wait_buf) {
+            match e.kind() {
+                // pipe was closed, client shutdown
+                std::io::ErrorKind::UnexpectedEof => return Ok(()),
+                _ => return Err(e.into()),
+            }
+        }
+
+        if PipeFlag::ClientSent as u8 != wait_buf[0] {
+            return Err(ModuleError::InvalidPipeFlag(
+                PipeFlag::ClientSent as u8,
+                wait_buf[0],
+            ));
+        }
+
         if config.reset_globals {
             lua.set_globals(clone_table(lua, &globals_ref)?)?;
         }
         buffers.clear();
 
+        let mut reader = ShmemReader::new(&mut shmem);
+
         let res = match handle_req(
             lua,
+            &mut reader,
             &mut item_ref_handler,
             &resolve,
-            &mut request,
             &mut buffers,
         ) {
             Err(e) => serialize_err(e.to_string()).expect("Failed to serialize err string"),
             Ok(buf) => buf,
         };
 
-        let _ = request.send(res);
+        if let Err(_) = shmem.write_data(&res) {
+            // if the owner was wrong, the client must have changed it so we do nothing
+            continue;
+        }
+        pipe.write_all(&[PipeFlag::ModuleSent as u8])?;
+        pipe.flush()?;
     }
-
-    Ok(())
-}
-
-/// If the client doesn't recieve back a `Pong` within 3 seconds, it is assumed to have died and we should also exit
-fn ping_requester(client: SharedClient, timeout: Duration) {
-    use std::{
-        process::exit,
-        thread::{sleep, spawn},
-    };
-    spawn(move || {
-        {
-            client.lock().unwrap().set_read_timeout(timeout);
-        }
-        loop {
-            sleep(timeout);
-            {
-                let mut c = client.lock().unwrap();
-                if let Err(_e) = c.write_ping() {
-                    exit(0);
-                }
-                if let Err(_e) = c.read_pong() {
-                    exit(0);
-                }
-            }
-        }
-    });
 }
 
 /// Returns the root of the Scripting API
@@ -168,33 +165,41 @@ fn resolve(lua: &Lua, client: SharedClient) -> Result<LuaAnyUserData, ModuleErro
     match resolve_fn.call::<LuaAnyUserData>(()) {
         Ok(r) => Ok(r),
         Err(e) => {
-            client.lock().unwrap().write_noresolve()?;
+            client
+                .lock()
+                .expect("client was poisoned")
+                .write_noresolve()?;
             return Err(ModuleError::Lua(e));
         }
     }
 }
 
 /// Executes some lua code and times it
-fn execute(lua: &Lua, code: &[u8]) -> Result<(LuaValue, Duration), RequestError> {
+fn execute(lua: &Lua, code: &str) -> Result<(LuaValue, Duration), RequestError> {
     let lua_code = lua.load(code);
-    let eval_i = std::time::Instant::now();
+    let eval_i = Instant::now();
     let value: LuaValue = lua_code.eval()?;
-    Ok((value, eval_i.elapsed()))
+    let eval_time = eval_i.elapsed();
+    Ok((value, eval_time))
 }
 
 #[derive(Debug, Default)]
 struct Buffers {
-    payload: Vec<u8>,
-    lua_code: Vec<u8>,
     nameless_args: Vec<LuaValue>,
-    global_arg_keys: Vec<String>,
 }
 
 impl Buffers {
     pub fn clear(&mut self) {
-        self.payload.clear();
-        self.lua_code.clear();
         self.nameless_args.clear();
-        self.global_arg_keys.clear();
+    }
+}
+
+shmem_struct!(ShmemModule, (Module => Client));
+
+impl ShmemModule {
+    pub fn new(path: &str) -> Result<Self, ModuleError> {
+        let _schmem = ShmemConf::new().flink(path).open()?;
+        let ptr = _schmem.as_ptr();
+        Ok(Self { _schmem, ptr })
     }
 }

@@ -1,31 +1,18 @@
-use std::{
-    io::{Read, Write},
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
-    time::Duration,
-};
+use std::io::{Read, Write};
 
-use resolved_shared::{PrePacket, ResolveConfig};
+use resolved_shared::{ModuleConfig, PrePacket};
 
 use crate::error::ModuleError;
 
 /// The [`TcpStream`] for [`PrePacket`]'s and packets sent outside the normal request execution loop
 #[derive(Debug)]
-pub struct Client(TcpStream);
+pub struct Client(resolved_shared::PipeSync);
 
 impl Client {
     /// Creates a new client and connect to localhost:<port>
-    pub fn new(port: u16) -> std::io::Result<Self> {
-        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
-        let client = TcpStream::connect(addr)?;
-        Ok(Self(client))
-    }
-
-    /// Write the modules port to the client
-    pub fn write_port(&mut self, port: u16) -> Result<(), ModuleError> {
-        self.0.write(&[PrePacket::Ready as u8])?;
-        self.0.write(&port.to_be_bytes())?;
-        self.0.flush()?;
-        Ok(())
+    pub fn new(id: u32) -> std::io::Result<Self> {
+        let pipe = resolved_shared::connect_module_pipe(id)?;
+        Ok(Self(pipe))
     }
 
     /// Writes an error to the client
@@ -44,15 +31,8 @@ impl Client {
         Ok(())
     }
 
-    /// Writes a ping packet to the client
-    pub fn write_ping(&mut self) -> std::io::Result<()> {
-        self.0.write(&[PrePacket::Ping as u8])?;
-        self.0.flush()?;
-        Ok(())
-    }
-
     /// Reads the specifiec configurations from the client
-    pub fn read_config(&mut self) -> std::io::Result<ResolveConfig> {
+    pub fn read_config(&mut self) -> std::io::Result<ModuleConfig> {
         let mut buf = [0u8; 1];
         self.0.read_exact(&mut buf)?;
         let packet_type = PrePacket::from_u8(buf[0]).expect("invalid packet type byte");
@@ -60,38 +40,21 @@ impl Client {
             panic!("invalid packet type")
         }
 
-        let mut buf = [0u8; size_of::<u32>()];
-        self.0.read_exact(&mut buf)?;
-        let timeout = u32::from_be_bytes(buf);
-
         let mut buf = [0u8; 1];
         self.0.read_exact(&mut buf)?;
         let reset_globals = buf[0] == 1;
 
-        Ok(ResolveConfig {
-            timeout: Duration::from_millis(timeout as u64),
-            reset_globals,
-        })
-    }
-
-    /// Reads back the pong response from the client
-    pub fn read_pong(&mut self) -> std::io::Result<()> {
-        let mut buf = [0u8; 1];
+        let mut buf = [0u8; size_of::<u32>()];
         self.0.read_exact(&mut buf)?;
-        let packet_type = PrePacket::from_u8(buf[0]).unwrap();
-        if packet_type != PrePacket::Pong {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Not a pong packet".to_string(),
-            ));
-        }
-        Ok(())
-    }
+        let shmem_path_len = u32::from_be_bytes(buf);
 
-    /// Sets the read timeout on the internal [`TcpStream`]
-    pub fn set_read_timeout(&mut self, time: Duration) {
-        self.0
-            .set_read_timeout(Some(time))
-            .expect("failed to set read_timeout");
+        let mut buf = vec![0u8; shmem_path_len as usize];
+        self.0.read_exact(&mut buf)?;
+        let shmem_path = String::from_utf8(buf).expect("shmem path had invalid utf8");
+
+        Ok(ModuleConfig {
+            reset_globals,
+            shmem_path,
+        })
     }
 }

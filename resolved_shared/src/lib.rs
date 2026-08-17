@@ -1,6 +1,10 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use serde::{Deserialize, Serialize};
+
+mod mem;
+
+pub use mem::*;
 
 /// Packets sent by the client and module before the module starts accepting requests / outside the normal request handling
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -180,5 +184,24 @@ impl ResolveConfig {
 impl Default for ResolveConfig {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+/// Configuration sent from the client to the module, contains a subset* of [`ResolveConfig`] and extra information
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleConfig {
+    pub reset_globals: bool,
+    pub shmem_path: String,
+}
+
+impl ModuleConfig {
+    pub fn new(
+        resolve_config: &ResolveConfig,
+        shmem_path: &Path,
+    ) -> Result<Self, std::num::TryFromIntError> {
+        Ok(Self {
+            reset_globals: resolve_config.reset_globals,
+            shmem_path: shmem_path.display().to_string(),
+        })
     }
 }

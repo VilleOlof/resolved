@@ -11,6 +11,8 @@ pub enum RequestError {
     InvalidArgType(u8),
     #[error("Tried to call StoreTable with a value that wasn't a table, got a: {0:?}")]
     NotATable(&'static str),
+    #[error("Not enough enogh bytes in shared memory len")]
+    NotEnoughBytesInMemory,
 
     #[error(transparent)]
     FromUtf8(#[from] std::string::FromUtf8Error),
@@ -23,7 +25,7 @@ pub enum RequestError {
     #[error(transparent)]
     Lua(#[from] mlua::Error),
     #[error(transparent)]
-    TryGet(#[from] bytes::TryGetError),
+    ShmemData(#[from] resolved_shared::ShmemDataError),
 }
 
 /// Errors during setup and outside normal requests
@@ -31,11 +33,17 @@ pub enum RequestError {
 pub enum ModuleError {
     #[error("tried to get the global Resolve() function but got: {0}")]
     GlobalResolveWasNotAFunction(&'static str),
+    #[error("Waited, got flag: {1:?} but expected {0:?}")]
+    InvalidPipeFlag(u8, u8),
 
     #[error(transparent)]
     Lua(#[from] Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
+    Shmem(#[from] resolved_shared::ShmemError),
+    #[error(transparent)]
     Any(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    #[error(transparent)]
+    ShmemData(#[from] resolved_shared::ShmemDataError),
 }

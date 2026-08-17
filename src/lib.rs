@@ -10,6 +10,7 @@ mod item_ref;
 mod item_ref_list;
 mod owned_script;
 mod packet;
+mod put;
 mod resolve;
 mod script;
 mod script_handler;
@@ -88,53 +89,13 @@ pub mod prelude {
 // https://github.com/mlua-rs/mlua/blob/main/docs/chunk.md ^
 pub use resolved_macros::script;
 
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[tokio::test]
-    async fn simple() -> Result<(), Error> {
-        // let sub = tracing_subscriber::FmtSubscriber::builder()
-        //     .with_max_level(tracing::Level::TRACE)
-        //     .finish();
-        // tracing::subscriber::set_global_default(sub).unwrap();
-
-        let resolve = Resolve::new().await?;
-
-        // let t = std::time::Instant::now();
-        // let ver = resolve
-        //     .execute::<String>("return resolve:GetVersionString()")
-        //     .await?;
-
-        // println!("{:?}", t.elapsed());
-        // assert!(!ver.is_empty());
-        // println!("{ver:?}");
-
-        let s = resolve.store_list("{ 1, 2, 3, 4, 5}").await?;
-        drop(s);
-
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        Ok(())
-    }
-}
-
 // TODO:
-// - [/] rerun benchmarks, redo them a bit to make more sense and easier to display those numbers
-//      and show some of those numbers in readme, like time to start a resolve instance
-//      and the average time to execute a script (without starting the instance), and fuck async benchmarking, pools work just fine in tests
-// - [X] tidy up cargo.toml's
-//      - [X] need to fix shared & macros subcrates cargo.tomls
-// - [X] make create ready for release
-//          root `resolved` and `resolved_shared` needs to be published as we cant use paths in dependencies i think?
-//          `build_lib` and `lua_module` are prebuilt and done before publishing
-//          make sure prebuilts are included in built package etc
-// - [/] use the crate from a new binary crate externally and try and use it (rebuild clipboard crate?)
-// - [X] tracing feature, really useful to have trace logs in internal for debugging
-//      we only need to log client startup for client details, and networking between module
-//      the rest is pointless to log since its direct errors, wrappers mostly and stuff
-//      and 90% of other functions eventually point to send_packet
-// - [] remove all "lua" code written in the library, everything should be direct access
-// - [] ItemRefList 'source' ItemRef gets dropped on its own and not in the batch
-//      but a `send_drop_item` log msg doesnt appear?
+// - [X*] stablize shmem & pipe packet handler
+//      improve areas around it to better fit their new API
+// - [X] rewrite bit of architecture
+// - [/] look at all docs
+// - [] remove ResolveConfig timeout, since its on the script object and isnt used
+//      maybe look if we could possibly add some more configs?
+// - [] sanity check with friends if this seems good and get someone to try using it
+// - [] move interprocess dep to workspace and only add tokio feature on crate & not in module
+// - [] some mention of the unsafe code and which 3 files it exists in (shared/mem, lua_module/reader, src/put)

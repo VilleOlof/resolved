@@ -376,6 +376,32 @@ mod dummy {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn script_no_timeout() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
+
+        resolve
+            .execute::<()>(Script::new("sleep(1)").with_timeout(Duration::from_millis(100)))
+            .await?;
+
+        Ok(())
+    }
+    #[tokio::test]
+    async fn script_timeout() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
+
+        let Error::ScriptTimeout(_) = resolve
+            .execute::<()>(Script::new("sleep(100)").with_timeout(Duration::from_millis(1)))
+            .await
+            .err()
+            .unwrap()
+        else {
+            panic!("wrong error type, expected ScriptTimeout")
+        };
+
+        Ok(())
+    }
+
     #[cfg(feature = "macros")]
     mod macros {
         use super::*;

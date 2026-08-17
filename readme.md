@@ -12,13 +12,14 @@ Execute `Lua` code with *DaVinci Resolve Studio's* **Scripting API** in `Rust`
 
 > [!NOTE]  
 > This crate only works with *DaVinci Resolve* ***Studio***, aka the paid version.  
-> This will not work ever in the *free* version, and there's nothing I can do.
+> This will never in the *free* version.  
 
-*DaVinci Resolve* exposes a **Scripting API** via `Lua` or `Python`, but this crate only supports `Lua`.  
+*DaVinci Resolve* exposes a **Scripting API** via `Lua` for us to use so we can interact with it.  
 From `Rust` you can send a piece of `Lua` code to *DaVinci Resolve* and get the resulting value back in `Rust`.
 
 This makes it easy to externally call *DaVinci Resolve* and automate tasks and do stuff with the values returned.  
-With the power of how this crate is built and it's custom lua module, most simple API calls take *less* than a millisecond.
+With the power of how this crate is built and it's custom lua module,  
+some *simple* calls take *less* than `20µs` *(that's 0.00002 !! and that's for the entire execution!)*.
 
 ## Install
 
@@ -54,10 +55,10 @@ And we'll go over all of them right here:
 ### Resolve
 
 `Resolve` is a struct which holds a *single-threaded* connection to *DaVinci Resolve*.  
-Any instance of `Resolve` in Rust can cheaply be cloned and it still references that one connection.  
+Any instance of `Resolve` in Rust can be cheaply cloned and it still references that one connection.  
 
 Any and all functions to execute code will end up in the `Resolve` struct which will make it happen.  
-It mostly handles the networking to it's linked custom lua module which has control over the lua context.  
+It mostly handles the communication to it's linked custom lua module which has control over the lua context.  
 
 `Resolve` instances are by far the slowest part of this crate, so try and re-use instances.
 
@@ -108,7 +109,8 @@ The sweet spot for smaller pieces of code is around 2-6, but heavily depends on 
 ### Execute
 
 `.execute` is the function you'll call to well, *execute* any piece of lua code with *DaVinci Resolve's* **Scripting API**.  
-The input of this function can be any type of `str`, `String`, `Cow<'_, str>`, you name it.  
+The input of this function can be any type of `str`, `String`, `Cow<'_, str>`, `Script`, you name it.  
+*(we'll touch on what a `Script` is later)*
 
 The root of the **Scripting API** is a function called `Resolve()`  
 which returns an instance, which holds all other API functions in it.  
@@ -161,7 +163,7 @@ async fn main() -> ResolveResult<()> {
 ```
 
 See how we use `self` in both, when we run `.execute` on `Resolve`, it is the global *resolve* instance.  
-Then when execute with our `ItemRef` which holds a reference to our *project manager*,  
+Then when we execute with our `ItemRef` which holds a reference to our *project manager*,  
 it changes `self` to that instance so we can use it. Basically, `self` is your active execution instance.
 
 If the stored reference is a *serializeable* value, you can call `.value<T>()` on an `ItemRef` to get it's actual value.
@@ -247,7 +249,7 @@ async fn main() -> ResolveResult<()> {
 }
 ```
 
-The `Script` as a builder pattern for it's arguments.  
+The `Script` has a builder pattern for it's arguments.  
 
 Any values added with `.arg` will be pushed to a global lua variable called `arg`.  
 So in the example we can access this argument with `arg[1]`, so it will equal `5` when it runs.  
@@ -274,10 +276,7 @@ async fn main() -> ResolveResult<()> {
     let media_storage = resolve.store("self:GetMediaStorage").await?;
     
     let script = Script::new(
-        r#"
-            local current_page = self:GetCurrentPage()
-            return media:GetFileList("/")
-        "#
+            r#"return media:GetFileList("/")"#
         )
         .named_arg_ref("media", &media_storage)?;
 
@@ -314,7 +313,6 @@ async fn main() -> ResolveResult<()> {
     let media = resolve.store("self:GetMediaStorage").await?;
     // Reference ItemRef's with: `@`
     let result: Vec<String> = resolve.execute(script! {
-        local current_page = self:GetCurrentPage()
         return @media:GetFileList("/")
     }).await?;
 
@@ -332,12 +330,15 @@ Look at the `script!` docs for more information on this.
 
 ## Features
 
-Both of the following features are **enabled by default**:
+The following features are **enabled by default**:
 
 - `macros`  
     Enables `script!` macro to write *Lua* in *Rust* with references to variables.
 - `pool`  
     Enables `PooledResolve` which can contain multiple instances to execute multiple things at the same time  
+
+Optional features:
+
 - `tracing`  
     Enables [`tracing`](https://github.com/tokio-rs/tracing) logging,  
     this only logs `trace` events during client setup and packet handling.
@@ -367,10 +368,10 @@ Also measures the startup of the lua module.
 
 | Metric    | Time        |
 |-----------|-------------|
-| Mean      | `65.692 ms` |
-| Std. Dev. | `19.488 ms` |
-| Median    | `57.668 ms` |
-| MAD       | `8.2494 ms` |
+| Mean      | `45.824 ms` |
+| Std. Dev. | `6.6860 ms` |
+| Median    | `44.184 ms` |
+| MAD       | `1.9834 ms` |
 
 ### Resolve client
 Time to create a new `Resolve` instance that connects to DaVinci Resolve.  
@@ -385,14 +386,14 @@ This also measures the startup time of the lua module.
 
 ### Script execution baseline
 This is time to execute an empty script.  
-This mostly measures the networking, serializing and request handling
+This mostly measures the communication, serializing, execution and request handling
 
 | Metric    | Time        |
 |-----------|-------------|
-| Mean      | `267.04 µs` |
-| Std. Dev. | `109.68 µs` |
-| Median    | `246.40 µs` |
-| MAD       | `102.29 µs` |
+| Mean      | `19.372 µs` |
+| Std. Dev. | `1.9273 µs` |
+| Median    | `18.919 µs` |
+| MAD       | `1.0058 µs` |
 
 ## Why Windows Only?
 
@@ -407,6 +408,9 @@ And because of confusing dependency and build script problems, this `lua_module.
 
 I personally don't own a desktop Apple device *(DaVinci Resolve on linux doesn't even support this type of Scripting API)* so it's very difficult for me to make this library work on that platform.
 
+The passing of data between the `.dll` and the library also uses *shared memory* and *named pipes*.  
+These implementations are also exclusive to Windows, so don't expect this for any other platform.
+
 This crate has only been tested on `Windows 11 25H2 x64`
 
 ## Tests
@@ -415,7 +419,7 @@ To easier run and execute tests without having *DaVinci Resolve Studio* open,
 there is a `fudummy` binary which replicates the behavior of the real `fuscript.exe` binary.  
 
 This dummy binary will take in the same arguments and execute the script without the **Scripting API**.  
-But this is enough to test networking, packets, registries, references, serializing and more core functionality.  
+But this is enough to test communication, packets, registries, references, serializing and more core functionality.  
 
 ### Running Dummy Tests
 
@@ -449,5 +453,16 @@ To run crate tests that don't ever need some kind of `Resolve` instance,
 you can run the normal test command but skip any *dummy* tests.
 
 ```bash
-cargo test -- --skip dummy
+cargo test -- --skip dummy --skip resolve
+```
+
+### Resolve tests
+
+There's a few tests that requires a *DaVinci Resolve* version that supports the following API's used in each of their tests.
+
+```bash
+# calls resolve:GetVersionString
+cargo test resolve::version --features tracing -- --nocapture
+# or this for a fully* optimized test
+cargo test resolve::version --features tracing --profile bench -- --nocapture
 ```

@@ -130,9 +130,14 @@ impl ItemRefList {
 impl Drop for LuaRefList {
     fn drop(&mut self) {
         let mut ids = std::mem::take(&mut self.refs);
-        // TODO: this does nothing as the strong count is still 2 so this gets filtered out
-        // and it sends its own DropItem packet
-        ids.push(self.source.clone()); // unsure if this has a strong count of 2 when drop_all runs
+
+        // include the source ItemRef if we can in the DropMany packet
+        if Arc::strong_count(&self.source.value) == 1 {
+            let r = self.source.resolve();
+            let item = std::mem::replace(&mut self.source, ItemRef::phantom(r));
+            ids.push(item);
+        }
+
         unsafe { ItemRefList::drop_all(self.source.resolve(), ids) };
     }
 }
@@ -154,13 +159,16 @@ impl ItemRefList {
             .filter(|x| Arc::strong_count(&x.value) == 1 && !x.is_dropped())
             .map(|x| {
                 // after filtering, we mark the rest as dropped since were gonna batch drop them
-                *x.value.dropped.write().unwrap() = true;
+                *x.value
+                    .dropped
+                    .write()
+                    .expect("itemref.dropped was poisoned") = true;
                 x.id()
             })
             .collect();
 
         tokio::spawn(async move {
-            if let Err(e) = resolve.send_drop_items(to_drop).await {
+            if let Err(e) = resolve.send_drop_items(&to_drop).await {
                 eprintln!("{e:?}")
             }
         });
