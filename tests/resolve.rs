@@ -25,7 +25,7 @@ mod resolve {
             tracing::subscriber::set_global_default(sub).unwrap();
         }
 
-        let resolve = Resolve::new_with_config(&ResolveConfig::KEEP_GLOBALS).await?;
+        let resolve = Resolve::new_with_config(&ResolveConfig::keep_globals()).await?;
 
         warmup(&resolve).await?;
 
@@ -37,6 +37,8 @@ mod resolve {
 
         println!("[{elapsed:?}]: {version}");
         assert!(!version.is_empty());
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         Ok(())
     }

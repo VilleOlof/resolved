@@ -28,8 +28,10 @@ impl<'a> ItemRefHandler<'a> {
     pub fn insert(&mut self, value: impl IntoLua) -> Result<u64, RequestError> {
         let key = self.lua.create_registry_value(value)?;
         self.latest_id += 1;
-        self.keys.insert(self.latest_id.0, key);
-        Ok(self.latest_id.0)
+        let id = self.latest_id.0;
+        self.keys.insert(id, key);
+        crate::debug!(?id, "added value to item ref handler and the registry");
+        Ok(id)
     }
 
     /// Retrieve the value from the registry based on the id
@@ -39,6 +41,7 @@ impl<'a> ItemRefHandler<'a> {
             .get(&id)
             .ok_or(RequestError::NoRegistryKeyWithId(id))?;
         let value = self.lua.registry_value::<T>(key)?;
+        crate::debug!(?id, "got value from reference");
         Ok(value)
     }
 
@@ -49,6 +52,7 @@ impl<'a> ItemRefHandler<'a> {
             .remove(&id)
             .ok_or(RequestError::NoRegistryKeyWithId(id))?;
         self.lua.remove_registry_value(key)?;
+        crate::debug!(?id, "removed from item ref handler and the registry");
         Ok(())
     }
 }

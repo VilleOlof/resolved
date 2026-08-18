@@ -37,6 +37,10 @@ pub enum Error {
     ScriptTimeout(Duration),
     #[error("Waited, got flag: {1:?} but expected {0:?}")]
     InvalidPipeFlag(u8, u8),
+    #[error(
+        "Got data from another request, this can happen if request #1 times out and before it can finish #1, you send a new #2 and then recieve the data from #1. expected handle: {0:?} and got {1:?}"
+    )]
+    WrongHandle([u8; 4], [u8; 4]),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

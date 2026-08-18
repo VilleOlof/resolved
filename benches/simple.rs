@@ -42,12 +42,15 @@ async fn pool_n<'c>(pool: &PooledResolve, n: usize, script: impl Into<OwnedScrip
 // so we set a really high timeout to avoid the lua module from exiting early
 // while still cleaning it up incase the benchmark panics, it will still send a shutdown packet on drop
 const BENCHMARK_TIMEOUT: Duration = Duration::from_mins(5);
-const BENCHMARK_CONFIG: ResolveConfig = ResolveConfig {
-    timeout: BENCHMARK_TIMEOUT,
-    // we dont really run any code, so for performance we dont reset globals
-    // this saves a toon of time in smaller tests
-    reset_globals: false,
-};
+fn benchmark_config() -> ResolveConfig {
+    ResolveConfig {
+        timeout: BENCHMARK_TIMEOUT,
+        // we dont really run any code, so for performance we dont reset globals
+        // this saves a toon of time in smaller tests
+        reset_globals: false,
+        ..Default::default()
+    }
+}
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -56,14 +59,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         .build()
         .unwrap();
 
-    let resolve = rt.block_on(async { Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap() });
+    let resolve =
+        rt.block_on(async { Resolve::new_with_config(&benchmark_config()).await.unwrap() });
     let pool_2 = rt.block_on(async {
-        PooledResolve::new_with_config(2, BENCHMARK_CONFIG)
+        PooledResolve::new_with_config(2, benchmark_config())
             .await
             .unwrap()
     });
     let pool_8 = rt.block_on(async {
-        PooledResolve::new_with_config(8, BENCHMARK_CONFIG)
+        PooledResolve::new_with_config(8, benchmark_config())
             .await
             .unwrap()
     });
@@ -91,7 +95,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     exec.finish();
 
-    let resolve = rt.block_on(async { Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap() });
+    let resolve =
+        rt.block_on(async { Resolve::new_with_config(&benchmark_config()).await.unwrap() });
     let mut exec_lengthy = c.benchmark_group("execute_lengthy");
     exec_lengthy.bench_function("single_1", |b| {
         b.to_async(&rt).iter(|| run_n(&resolve, 1, LENGTHY));
@@ -133,7 +138,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let instances = Arc::new(tokio::sync::Mutex::new(vec![]));
     create.bench_function("resolve", |b| {
         b.to_async(&rt).iter(|| async {
-            let r = Resolve::new_with_config(&BENCHMARK_CONFIG).await.unwrap();
+            let r = Resolve::new_with_config(&benchmark_config()).await.unwrap();
             {
                 instances.lock().await.push(r);
             }

@@ -3,7 +3,7 @@ use std::{borrow::Cow, time::Duration};
 use resolved_shared::ArgType;
 use serde::Serialize;
 
-use crate::{Error, ItemRef, owned_script::OwnedScript, packet::DEFAULT_PACKET_TIMEOUT};
+use crate::{Error, ItemRef, owned_script::OwnedScript};
 
 /// A piece of lua code with optional arguments.
 ///
@@ -58,7 +58,9 @@ pub struct Script<'c> {
     pub(crate) with: Option<&'c ItemRef>,
     /// Timeout for the scripts execution time.
     /// The time for the module to send back a response
-    pub(crate) timeout: Duration,
+    ///
+    /// If not specified it will use the default configured timeout in the [`Resolve`](crate::Resolve) instance
+    pub(crate) timeout: Option<Duration>,
 }
 
 impl Default for Script<'_> {
@@ -67,7 +69,7 @@ impl Default for Script<'_> {
             lua: Cow::default(),
             args: Vec::default(),
             with: Option::default(),
-            timeout: DEFAULT_PACKET_TIMEOUT,
+            timeout: None,
         }
     }
 }
@@ -116,22 +118,24 @@ impl<'c> Script<'c> {
             lua: lua_script.into(),
             with: None,
             args: Vec::with_capacity(arg_cap),
-            timeout: DEFAULT_PACKET_TIMEOUT,
+            timeout: None,
         }
     }
 
     /// The timeout on the scripts execution
     #[inline]
-    pub fn timeout(&self) -> Duration {
+    pub fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
 
     /// Changes the timeout of the scrips execution
     ///
-    /// Note that if your script hangs or
+    /// Beaware of setting this too low, if you timeout and the module takes a long time to execute your code.\
+    /// And you send another request, the first execution is still running and you will get a [`Error::WrongHandle`] error.\
+    /// Scripts never gets killed prematurely even if you timeout on the client.
     #[inline]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
     }
 

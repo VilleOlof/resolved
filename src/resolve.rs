@@ -1,21 +1,20 @@
-use std::{fmt::Debug, path::Path, sync::Arc};
+use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 
 use parking_lot::RwLock;
-use resolved_shared::{PipeTokio, ResolveConfig, ScriptResponse};
+use resolved_shared::{ScriptResponse, instance_dir, shmem_path};
 use serde::de::DeserializeOwned;
-use tempfile::TempDir;
 use tokio::{
-    fs::write,
+    fs::{create_dir, write},
     process::Child,
     sync::{Mutex, MutexGuard},
 };
 
 use crate::{
-    Error, ItemRef, ItemRefList, Script,
+    Error, ItemRef, ItemRefList, ResolveConfig, Script, cleanup,
     packet::ShmemClient,
     script_handler::{
-        LUA_MODULE, MODULE_NAME, dll_script, handle_module_request, spawn_script_server,
-        write_config,
+        LUA_MODULE, LUA_MODULE_TRACING, MODULE_NAME, Pipe, dll_script, handle_module_request,
+        new_module_pipe, new_pipe, spawn_script_server, write_config,
     },
 };
 
@@ -63,14 +62,14 @@ pub struct Resolve {
 struct InnerResolve {
     /// The unique id for this specific instance and connection to `DaVinci Resolve`
     id: u32,
-    /// We just hold onto this so it doesnt run its Drop function and remove the files until Resolve is dropped
-    _temp_dir: TempDir,
+    /// The default timeout for [`Script`]'s if they haven't specified their own timeout.
+    default_timeout: Duration,
     /// If the module was shutdown or if the module in someway shutdown, this is set to `true`
     cancelled: Arc<RwLock<bool>>,
     /// Instances of the shared memory and pipe used for requests
     packet_handler: Mutex<PacketHandler>,
     /// The pipe used for setting up the module
-    _module_pipe: PipeTokio,
+    _module_pipe: Pipe,
     /// The script binary that holds the module
     child: Child,
 }
@@ -78,7 +77,7 @@ struct InnerResolve {
 #[derive(Debug)]
 pub(crate) struct PacketHandler {
     pub(crate) shmem: ShmemClient,
-    pub(crate) pipe: PipeTokio,
+    pub(crate) pipe: Pipe,
 }
 
 // when the inner arc'd resolve instance is fully dropped then we can discard the module and bg tasks
@@ -112,7 +111,7 @@ impl Resolve {
     /// # Errors
     /// If the internal lua module fails to reach *`DaVinci Resolve`* or the creation of this instance fails
     pub async fn new() -> Result<Self, Error> {
-        Self::new_with_config(&ResolveConfig::DEFAULT).await
+        Self::new_with_config(&ResolveConfig::default()).await
     }
 
     /// Creates a new [`Resolve`] instance with the specified [`ResolveConfig`].
@@ -122,6 +121,10 @@ impl Resolve {
     /// - The setup server communication fails
     /// - The module startup fails
     pub async fn new_with_config(config: &ResolveConfig) -> Result<Self, Error> {
+        if !config.skip_cleanup {
+            cleanup::check().await?;
+        }
+
         #[cfg(feature = "tracing")]
         let creation_time = std::time::Instant::now();
 
@@ -132,21 +135,15 @@ impl Resolve {
         #[cfg(feature = "tracing")]
         let _enter = span.enter();
 
-        let temp_dir = TempDir::new()?;
-
-        #[cfg(feature = "tracing")]
-        tracing::trace!(
-            dir = ?temp_dir,
-            "Created temporary directory",
-        );
+        let instance_dir = instance_dir(id);
+        create_dir(&instance_dir).await?;
 
         let cancelled = Arc::new(RwLock::new(false));
 
-        let shmem_path = temp_dir.path().join("shmem");
-        let shmem = ShmemClient::new(&shmem_path)?;
+        let shmem = ShmemClient::new(&shmem_path(&instance_dir))?;
 
         let (child, module_pipe, pipe) =
-            start(&temp_dir, config, cancelled.clone(), id, &shmem_path).await?;
+            start(&instance_dir, config, cancelled.clone(), id).await?;
 
         let packet_handler = Mutex::new(PacketHandler { shmem, pipe });
 
@@ -158,7 +155,7 @@ impl Resolve {
         Ok(Self {
             inner: Arc::new(InnerResolve {
                 id,
-                _temp_dir: temp_dir,
+                default_timeout: config.timeout,
                 cancelled,
                 packet_handler,
                 _module_pipe: module_pipe,
@@ -177,6 +174,11 @@ impl Resolve {
     #[inline]
     pub(crate) fn cancelled(&self) -> bool {
         *self.inner.cancelled.read()
+    }
+
+    #[inline]
+    pub(crate) fn timeout(&self) -> Duration {
+        self.inner.default_timeout
     }
 
     #[inline]
@@ -470,20 +472,25 @@ impl InnerResolve {
 /// # Errors
 /// If the lua module fails to reach *`DaVinci Resolve`* or for some other reason the lua module itself crashes before starting the http server.
 async fn start(
-    temp_dir: &TempDir,
+    instance_dir: &Path,
     config: &ResolveConfig,
     cancelled: Arc<RwLock<bool>>,
     id: u32,
-    shmem_path: &Path,
-) -> Result<(Child, PipeTokio, PipeTokio), Error> {
-    let module_pipe = resolved_shared::new_module_pipe(id)?;
-    let pipe = resolved_shared::new_pipe(id)?;
+) -> Result<(Child, Pipe, Pipe), Error> {
+    let module_pipe = new_module_pipe(id)?;
+    let pipe = new_pipe(id)?;
 
-    let dll = temp_dir.path().join(format!("{MODULE_NAME}.dll"));
-    write(&dll, LUA_MODULE).await?;
+    let dll = instance_dir.join(format!("{MODULE_NAME}.dll"));
+    let raw_module = if config.tracing {
+        LUA_MODULE_TRACING
+    } else {
+        LUA_MODULE
+    };
 
-    let script = dll_script(temp_dir.path(), id);
-    let script_path = temp_dir.path().join("script.lua");
+    write(&dll, raw_module).await?;
+
+    let script = dll_script(instance_dir, id);
+    let script_path = instance_dir.join("script.lua");
 
     #[cfg(feature = "tracing")]
     tracing::trace!(script, "Startup script");
@@ -496,7 +503,7 @@ async fn start(
     #[cfg(feature = "tracing")]
     tracing::trace!("Module pipe connected");
 
-    write_config(&mut module_pipe, config, shmem_path).await?;
+    write_config(&mut module_pipe, config).await?;
 
     let pipe = handle_module_request(&mut module_pipe, pipe).await?;
 

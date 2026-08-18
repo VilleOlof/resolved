@@ -16,8 +16,6 @@ macro_rules! log_id {
     };
 }
 
-pub(crate) const DEFAULT_PACKET_TIMEOUT: Duration = Duration::from_secs(3);
-
 // 1 byte   > ownership of shared memory
 // 1 byte   > MsgPacket (only written by the client)
 // 2 bytes  > Payload length (max size is 32768 so fits in u16)
@@ -44,7 +42,7 @@ impl Resolve {
     async fn send_packet<F, R, T>(
         &self,
         packet: MsgPacket,
-        timeout: Duration,
+        specified_timeout: Option<Duration>,
         body: F,
         response: R,
     ) -> Result<T, Error>
@@ -58,6 +56,14 @@ impl Resolve {
         }
 
         let mut handler = self.packet_handler().await;
+
+        let handle = {
+            let mut id = [0; 4];
+            fastrand::fill(&mut id);
+            id
+        };
+        handler.shmem.set_handle(handle);
+
         let mut put = ShmemPut::new(&mut handler.shmem);
 
         #[cfg(feature = "tracing")]
@@ -98,6 +104,7 @@ impl Resolve {
             Ok(())
         }
 
+        let timeout = specified_timeout.unwrap_or(self.timeout());
         match tokio::time::timeout(timeout, wait(&mut handler)).await {
             Ok(w) => w?,
             Err(_) => {
@@ -106,6 +113,23 @@ impl Resolve {
                 handler.shmem.set_owner(ShmemOwner::Client);
                 return Err(Error::ScriptTimeout(timeout));
             }
+        }
+
+        // we generate a handle, set it
+        // module copies it and sets it at the end of it's request
+        // and thus we read it back in
+        // and if they somehow dont match we are dealing with 2 different requests
+        // the data wont match and were fucked
+        //
+        // this can happen if we send a request and timeout
+        // and while the module is processing the first request, we send another
+        // so the ownership is still at the module so it sees no issues
+        // so it writes its data and signals to us and now we read the data from request #1 but we are on request #2
+        // by the module writing it the handle it copied we can ensure that we match request
+        let stored_handle = handler.shmem.get_handle();
+        if handle != stored_handle {
+            handler.shmem.set_owner(ShmemOwner::Client);
+            return Err(Error::WrongHandle(handle, stored_handle));
         }
 
         let data = handler
@@ -173,7 +197,7 @@ impl Resolve {
         let r = self
             .send_packet(
                 MsgPacket::DropItem,
-                DEFAULT_PACKET_TIMEOUT,
+                None,
                 |data| {
                     data.put_data(&id.to_be_bytes());
                     Ok(())
@@ -190,7 +214,7 @@ impl Resolve {
         let r = self
             .send_packet(
                 MsgPacket::DropMany,
-                DEFAULT_PACKET_TIMEOUT,
+                None,
                 |data| {
                     data.put_data(&u32::try_from(ids.len())?.to_be_bytes());
                     for id in ids {
@@ -213,7 +237,7 @@ impl Resolve {
         let r = self
             .send_packet(
                 MsgPacket::TableKeys,
-                DEFAULT_PACKET_TIMEOUT,
+                None,
                 |data| {
                     data.put_data(&id.to_be_bytes());
                     Ok(())
@@ -233,7 +257,7 @@ impl Resolve {
         let r = self
             .send_packet(
                 MsgPacket::ItemValue,
-                DEFAULT_PACKET_TIMEOUT,
+                None,
                 |data| {
                     data.put_data(&id.to_be_bytes());
                     Ok(())
@@ -251,7 +275,7 @@ impl Resolve {
     pub(crate) async fn send_shutdown(&self) -> Result<(), Error> {
         self.send_packet(
             MsgPacket::Shutdown,
-            DEFAULT_PACKET_TIMEOUT,
+            None,
             |_| /* <-- 2 story house */ Ok(()),
             |_| Ok(()),
         )

@@ -1,5 +1,6 @@
-use std::{path::Path, time::Duration};
+use std::{path::PathBuf, sync::LazyLock, time::Duration};
 
+use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
 mod mem;
@@ -154,54 +155,17 @@ impl<T> ScriptResponse<T> {
     }
 }
 
-/// Configuration for `Resolve` instances
-///
-/// Can be used to increase the internal ping timeout and or if it should reset globals after every execution.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ResolveConfig {
-    /// If the module don't get a pong packet back from the client in [`timeout`](ResolveConfig::timeout) time, it will exit.
-    pub timeout: Duration,
-    /// If the module should reset the lua globals between every request.
-    /// For short, small requests, this can increase performance by a good bit.
-    /// You just need to make sure you use `local` variables in lua and don't clutter the global table to mess with different scripts
-    pub reset_globals: bool,
-}
-
-impl ResolveConfig {
-    /// Default configuration for all instances
-    pub const DEFAULT: Self = ResolveConfig {
-        timeout: Duration::from_secs(60),
-        reset_globals: true,
-    };
-
-    /// Default configuration except that globals don't get reset
-    pub const KEEP_GLOBALS: Self = ResolveConfig {
-        timeout: Duration::from_secs(60),
-        reset_globals: false,
-    };
-}
-
-impl Default for ResolveConfig {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 /// Configuration sent from the client to the module, contains a subset* of [`ResolveConfig`] and extra information
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleConfig {
     pub reset_globals: bool,
-    pub shmem_path: String,
+    pub globals: Vec<(String, rmpv::Value)>,
 }
 
-impl ModuleConfig {
-    pub fn new(
-        resolve_config: &ResolveConfig,
-        shmem_path: &Path,
-    ) -> Result<Self, std::num::TryFromIntError> {
-        Ok(Self {
-            reset_globals: resolve_config.reset_globals,
-            shmem_path: shmem_path.display().to_string(),
-        })
-    }
+pub static RESOLVED_ROOT: LazyLock<PathBuf> =
+    LazyLock::new(|| BaseDirs::new().unwrap().data_local_dir().join("resolved"));
+
+#[inline]
+pub fn instance_dir(id: u32) -> PathBuf {
+    RESOLVED_ROOT.join(itoa::Buffer::new().format(id))
 }

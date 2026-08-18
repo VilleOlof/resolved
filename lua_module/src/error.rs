@@ -46,4 +46,6 @@ pub enum ModuleError {
     Any(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error(transparent)]
     ShmemData(#[from] resolved_shared::ShmemDataError),
+    #[error(transparent)]
+    RmpDecode(#[from] rmp_serde::decode::Error),
 }

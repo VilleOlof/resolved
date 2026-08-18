@@ -103,6 +103,7 @@ impl<'s> ShmemReader<'s> {
     ) -> Result<(LuaValue, Duration), RequestError> {
         let is_ref = self.u8()? == 1;
         let ref_id = if is_ref { Some(self.u64()?) } else { None };
+        crate::debug!(?is_ref, ?ref_id, "script with");
 
         let globals = lua.globals();
 
@@ -146,6 +147,15 @@ impl<'s> ShmemReader<'s> {
             }
         }
 
+        #[cfg(feature = "tracing")]
+        let nameless_count = buffers.nameless_args.len();
+        crate::debug!(
+            ?nameless_count,
+            ?global_key_names,
+            ?lua_code,
+            "got script data"
+        );
+
         if !buffers.nameless_args.is_empty() {
             let arg = lua.create_table_from(
                 buffers
@@ -168,12 +178,17 @@ impl<'s> ShmemReader<'s> {
         }
 
         let return_value = execute(lua, lua_code)?;
+        #[cfg(feature = "tracing")]
+        let (type_name, value, time) =
+            (return_value.0.type_name(), &return_value.0, return_value.1);
+        crate::info!(?type_name, ?time, ?value, "executed script");
 
         // we also need to reset the argument globals since
         // if a user has disabled reset_globals then their script arguments shouldnt clutter anyway
-        for name in global_key_names {
-            globals.remove(name)?;
+        for name in &global_key_names {
+            globals.remove(*name)?;
         }
+        crate::debug!(?global_key_names, "cleared global argument variables");
         // we dont need to remove SELF as its gonna be set next execution anyway
 
         Ok(return_value)

@@ -12,7 +12,7 @@ Execute `Lua` code with *DaVinci Resolve Studio's* **Scripting API** in `Rust`
 
 > [!NOTE]  
 > This crate only works with *DaVinci Resolve* ***Studio***, aka the paid version.  
-> This will never in the *free* version.  
+> This will never work in the *free* version.  
 
 *DaVinci Resolve* exposes a **Scripting API** via `Lua` for us to use so we can interact with it.  
 From `Rust` you can send a piece of `Lua` code to *DaVinci Resolve* and get the resulting value back in `Rust`.
@@ -105,6 +105,17 @@ async fn main() -> ResolveResult<()> {
 ```
 
 The sweet spot for smaller pieces of code is around 2-6, but heavily depends on the lifetime of every code execution.
+
+`Resolve` instances can be configured with `ResolveConfig`, this can also be passed into `PooledResolve`.  
+Start an instance with a configuration with `new_with_config`.  
+Settings that may be configured are:  
+- Default `Script` timeout  
+- If globals should be reset between executions  
+- Globals that persist in all scripts  
+- Module tracing logging to file
+
+See `ResolveConfig` for all fields and what exactly they do.  
+It has two default configs: `default()` and `keep_globals()`
 
 ### Execute
 
@@ -343,6 +354,10 @@ Optional features:
     Enables [`tracing`](https://github.com/tokio-rs/tracing) logging,  
     this only logs `trace` events during client setup and packet handling.
 
+    Note that the lua module can also have tracing enabled to a `module.log` file in it's [instance dir](#data-path).  
+    This option is enabled through `ResolveConfig` during runtime and *not* at compile time.  
+    *(tho if you dont enable it, you won't get any performance hit. It's 100% excluded)*
+
 ## Scripting API Documentation
 
 The current **Scripting API** can be found [`here`](https://gist.github.com/X-Raym/2f2bf453fc481b9cca624d7ca0e19de8).  
@@ -358,6 +373,12 @@ Which the library will attempt to use.
 
 But if your installation is on any different path for any reason,  
 you can set the environment variable `FUSCRIPT` to the path to the `fuscript.exe` in your installation.
+
+## Data Path
+
+This library will write temporary files and module log files to:  
+`C:\Users\$USER\AppData\Local\resolved`  
+Where every instance created will have their own sub-directory named after their internal `id`.
 
 ## Benchmarks
 
@@ -379,10 +400,10 @@ This also measures the startup time of the lua module.
 
 | Metric    | Time        |
 |-----------|-------------|
-| Mean      | `547.41 ms` |
-| Std. Dev. | `6.1195 ms` |
-| Median    | `550.04 ms` |
-| MAD       | `5.1227 ms` |
+| Mean      | `147.79 ms` |
+| Std. Dev. | `195.00 ms` |
+| Median    | `50.828 ms` |
+| MAD       | `4.9415 ms` |
 
 ### Script execution baseline
 This is time to execute an empty script.  
@@ -466,3 +487,18 @@ cargo test resolve::version --features tracing -- --nocapture
 # or this for a fully* optimized test
 cargo test resolve::version --features tracing --profile bench -- --nocapture
 ```
+
+## Unsafe
+
+For those who care a lot about safety:  
+
+This crate has a bit of unsafe code, but only for shared memory access between the lua module and the client crate.  
+If you'd like to analyze the unsafe code, all of it remains in these files:  
+- [`resolve_shared/mem.rs`](./resolved_shared/src/mem.rs)  
+- [`resolved/put.rs`](./src/put.rs)  
+- [`lua_module/reader.rs`](./lua_module/src/reader.rs)
+
+The crate gives some more safety so that both of the processes won't ever access it at the same time.  
+This is with help of events through named pipes and the first byte in the shared memory-  
+being who currently owns access to it.  
+Is this ever mismatched, the current process won't attempt to access any of it and fail.

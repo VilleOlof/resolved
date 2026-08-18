@@ -23,11 +23,16 @@ members = [
 resolver = "3"
 
 [workspace.dependencies]
+rmpv = { version = "1.3.1", features = ["with-serde"] }
 serde = { version = "1.0", features = ["derive"] }
 resolved_shared = { path = "./resolved_shared" }
 mlua = { version = "0.12", default-features = false }
+tracing-subscriber = "0.3.0"
+tracing = "0.1"
+interprocess = "2.4.3"
 rmp-serde = "1.3"
 thiserror = "2"
+itoa = "1"
 
 [dependencies]
 resolved_shared = { workspace = true }
@@ -44,13 +49,13 @@ tokio = { version = "1.52", features = [
     "time",
     "rt",
 ] }
+interprocess = { workspace = true, features = ["tokio"] }
+tracing = { workspace = true, optional = true }
+itoa = { workspace = true }
 futures = "0.3"
-tempfile = "3"
 fastrand = "2.5"
-itoa = "1"
 parking_lot = "0.12"
 resolved_macros = { version = "0.1.0", path = "resolved_macros", optional = true }
-tracing = { version = "0.1", optional = true }
 
 [features]
 default = ["pool", "macros"]
@@ -61,7 +66,7 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "time"] }
-tracing-subscriber = "0.3.0"
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "simple"

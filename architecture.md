@@ -65,6 +65,15 @@ but notably this directory also contains the `lua_module.dll` which is our entir
 This file needs to be in a place where the lua script can find it and properly load it.  
 This directory is also home to the file descriptor for our shared memory between the crate and child module.
 
+Right before this temporary dir is created, the instance tries to run cleanup on previously created files from other instances.  
+This cleanup has a `.lock` file which enforces that only one singular instance can do cleanup at a time.  
+The requirements are that x amount of files must exist, x amount of files must be old enough and only then,  
+will it run a background task to remove all of those directories whose `.dll` file can be removed.  
+If the `.dll` file cant be removed *(some other process is using it)* it will skip it and continue.
+
+We do a cleanup on start since we cant clean up files after since program may crash and leave stale files.  
+And we cant fully clean the directory anyway since `fuscript` holds a lock on the `.dll` until it exits which is after we exit.  
+
 Every client also has a random u32 id (random enough for us),  
 which identifies this specific client and it's module connection.  
 When we get a `ItemRef` from a `.store` function, that item holds onto its derived client.  
@@ -121,6 +130,7 @@ all resolve objects are thus also a userdata object, which we for sure cannot se
 ## A normal request
 
 - Create a new `Resolve` client
+    - Maybe runs cleanup in the background
     - Creates a temporary directory to write the module dll and lua script to
     - Starts the client server for pre request communication
     - Generates a unique id to this `Resolve` instance to hinder misuse of `ItemRef`'s

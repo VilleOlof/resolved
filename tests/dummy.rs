@@ -4,7 +4,7 @@ mod dummy {
     use std::time::Duration;
 
     use futures::future::join_all;
-    use resolved::prelude::*;
+    use resolved::{Globals, ResolveConfig, prelude::*};
     use tokio::{spawn, time::sleep};
 
     #[tokio::test]
@@ -53,9 +53,33 @@ mod dummy {
     async fn reset_globals() -> ResolveResult<()> {
         let resolve = Resolve::new().await?;
 
-        resolve.execute::<()>("my_value = 2").await?;
+        resolve.execute::<()>("my_value = 2\nreturn nil").await?;
         let glob: Option<i32> = resolve.execute("return my_value").await?;
         assert!(glob.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn config_globals() -> ResolveResult<()> {
+        let mut globals = Globals::with_capacity(2);
+        globals.add("id", &10)?;
+        globals.add("answer", &42)?;
+
+        let resolve = Resolve::new_with_config(&ResolveConfig {
+            globals,
+            reset_globals: true,
+            ..Default::default()
+        })
+        .await?;
+
+        assert_eq!(10, resolve.execute::<i32>("id").await?);
+        assert_eq!(
+            42,
+            resolve.execute::<i32>("how = false\nreturn answer").await?
+        );
+        assert_eq!(None, resolve.execute::<Option<bool>>("how").await?);
+        assert_eq!(10, resolve.execute::<i32>("id").await?);
 
         Ok(())
     }
@@ -392,6 +416,36 @@ mod dummy {
 
         let Error::ScriptTimeout(_) = resolve
             .execute::<()>(Script::new("sleep(100)").with_timeout(Duration::from_millis(1)))
+            .await
+            .err()
+            .unwrap()
+        else {
+            panic!("wrong error type, expected ScriptTimeout")
+        };
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wrong_handle() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
+        // #1 > timeout
+        //  #1 sleeps for 1s
+        // #2 > send with big timeout
+        //  get response from #1
+        // expect wronghandle
+
+        let Error::ScriptTimeout(_) = resolve
+            .execute::<()>(Script::new("sleep(500)").with_timeout(Duration::from_millis(1)))
+            .await
+            .err()
+            .unwrap()
+        else {
+            panic!("wrong error type, expected ScriptTimeout")
+        };
+
+        let Error::WrongHandle(_, _) = resolve
+            .execute::<()>(Script::new("5").with_timeout(Duration::from_secs(10)))
             .await
             .err()
             .unwrap()

@@ -17,6 +17,7 @@ pub fn handle_req(
     buffers: &mut Buffers,
 ) -> Result<Vec<u8>, RequestError> {
     let packet_type = reader.get_packet()?;
+    crate::info!(?packet_type, "request handler");
 
     return match packet_type {
         MsgPacket::Execute => {
@@ -39,7 +40,10 @@ pub fn handle_req(
             item_ref_handler.remove(id)?;
             Ok(Vec::new())
         }
-        MsgPacket::Shutdown => std::process::exit(1),
+        MsgPacket::Shutdown => {
+            crate::info!("shutting down from packet");
+            std::process::exit(1);
+        }
         MsgPacket::StoreTable => {
             let (value, eval_time) =
                 reader.handle_script(lua, item_ref_handler, resolve, buffers)?;
@@ -52,7 +56,10 @@ pub fn handle_req(
             // remove any resolve inserted flags
             match table.get::<LuaValue>(RESOLVE_FLAGS)? {
                 LuaValue::Nil => (),
-                _ => table.remove(RESOLVE_FLAGS)?,
+                _ => {
+                    crate::debug!("removed '__table' from table");
+                    table.remove(RESOLVE_FLAGS)?
+                }
             };
 
             let mut ids = Vec::with_capacity(table.len()? as usize);

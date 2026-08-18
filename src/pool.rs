@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use futures::future::join_all;
-use resolved_shared::ResolveConfig;
 use serde::de::DeserializeOwned;
 use tokio::{
     sync::{Mutex, Semaphore},
     task::JoinError,
 };
 
-use crate::{Error, Resolve, Script, script::ArgData};
+use crate::{Error, Resolve, ResolveConfig, Script, script::ArgData};
 
 /// A pool of [`Resolve`] instances.  
 ///
@@ -43,7 +42,7 @@ impl PooledResolve {
     /// # Errors
     /// If any of the instances fail to properly setup or the tasks fail to join
     pub async fn new(amount: usize) -> Result<Self, Error> {
-        Self::new_with_config(amount, ResolveConfig::DEFAULT).await
+        Self::new_with_config(amount, ResolveConfig::default()).await
     }
 
     /// Creates a new [`PooledResolve`] with `amount` instances in it, and a [`ResolveConfig`] that is passed to all instances.

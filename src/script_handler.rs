@@ -6,19 +6,24 @@ use std::{
 };
 
 use parking_lot::RwLock;
-use resolved_shared::{PipeListenerTokio, PipeTokio, PrePacket, ResolveConfig};
+use resolved_shared::{PrePacket, module_pipe_path, pipe_path};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, Command},
     select,
 };
 
-use crate::Error;
+use crate::{Error, ResolveConfig};
 
 /// `./lua_module` compiled from the `build.rs` script
 pub(crate) static LUA_MODULE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/prebuilt/lua_module.dll"
+));
+/// the [`LUA_MODULE`] but compiled with the tracing feature enabled
+pub(crate) static LUA_MODULE_TRACING: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/prebuilt/lua_module_tracing.dll"
 ));
 /// The name of the `lua_module` compiled module
 pub(crate) const MODULE_NAME: &str = "vinci";
@@ -85,10 +90,10 @@ pub(crate) async fn spawn_script_server(
 
 /// Handles the connection when starting up the lua module, writing the configuration and awaiting it's ready packet.
 pub(crate) async fn handle_module_request(
-    module_pipe: &mut PipeTokio,
-    pipe: PipeListenerTokio,
-) -> Result<PipeTokio, Error> {
-    async fn read_err(pipe: &mut PipeTokio) -> Result<Error, Error> {
+    module_pipe: &mut Pipe,
+    pipe: PipeListener,
+) -> Result<Pipe, Error> {
+    async fn read_err(pipe: &mut Pipe) -> Result<Error, Error> {
         let len = pipe.read_u32().await?;
         let mut s = vec![0; len as usize];
         pipe.read_exact(&mut s).await?;
@@ -117,22 +122,49 @@ pub(crate) async fn handle_module_request(
     }
 }
 
-pub(crate) async fn write_config(
-    pipe: &mut PipeTokio,
-    config: &ResolveConfig,
-    shmem_path: &Path,
-) -> Result<(), Error> {
+pub(crate) async fn write_config(pipe: &mut Pipe, config: &ResolveConfig) -> Result<(), Error> {
     pipe.write_u8(PrePacket::Configuration as u8).await?;
 
-    pipe.write_u8(u8::from(config.reset_globals)).await?;
+    // reset_globals
+    {
+        pipe.write_u8(u8::from(config.reset_globals)).await?;
+    }
 
-    let shmem_path = shmem_path.display().to_string();
-    pipe.write_u32(u32::try_from(shmem_path.len())?).await?;
-    pipe.write_all(&shmem_path.into_bytes()).await?;
+    // globals
+    {
+        pipe.write_u32(u32::try_from(config.globals.len())?).await?;
+        for (k, v) in &config.globals.list {
+            // key, string
+            pipe.write_u32(u32::try_from(k.len())?).await?;
+            pipe.write_all(k.as_bytes()).await?;
+
+            // value, generic T serialized buffer
+            pipe.write_u32(u32::try_from(v.len())?).await?;
+            pipe.write_all(v).await?;
+        }
+    }
+
     pipe.flush().await?;
 
     #[cfg(feature = "tracing")]
     tracing::trace!(?config, "Sent configuration");
 
     Ok(())
+}
+
+use interprocess::os::windows::named_pipe::{self, PipeListenerOptions, pipe_mode};
+
+pub type PipeListener = named_pipe::tokio::PipeListener<pipe_mode::Bytes, pipe_mode::Bytes>;
+pub type Pipe = named_pipe::tokio::PipeStream<pipe_mode::Bytes, pipe_mode::Bytes>;
+
+pub(crate) fn new_module_pipe(id: u32) -> std::io::Result<PipeListener> {
+    PipeListenerOptions::new()
+        .path(module_pipe_path(id))
+        .create_tokio_duplex::<pipe_mode::Bytes>()
+}
+
+pub(crate) fn new_pipe(id: u32) -> std::io::Result<PipeListener> {
+    PipeListenerOptions::new()
+        .path(pipe_path(id))
+        .create_tokio_duplex::<pipe_mode::Bytes>()
 }

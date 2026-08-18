@@ -1,4 +1,8 @@
-use std::{fmt::Debug, slice};
+use std::{
+    fmt::Debug,
+    path::{Path, PathBuf},
+    slice,
+};
 
 pub use shared_memory::{Shmem, ShmemConf, ShmemError};
 
@@ -51,19 +55,35 @@ impl ShmemOwner {
     }
 }
 
-#[inline]
-pub const fn data_offset() -> usize {
-    1 + 1 + 2
-}
+// 1 byte  > ownership
+// 1 byte  > msgpacket
+// 4 byte  > handle id
+// 2 byte  > data length
+// _ bytes > data
 
 #[inline]
-pub const fn len_offset() -> usize {
-    1 + 1
+pub const fn ownership_offset() -> usize {
+    0 // 1 byte width
 }
 
 #[inline]
 pub const fn type_offset() -> usize {
-    1
+    0 + 1 // 1 byte width
+}
+
+#[inline]
+pub const fn handle_offset() -> usize {
+    0 + 1 + 1 // 4 byte width
+}
+
+#[inline]
+pub const fn len_offset() -> usize {
+    0 + 1 + 1 + 4 // 2 byte width
+}
+
+#[inline]
+pub const fn data_offset() -> usize {
+    0 + 1 + 1 + 4 + 2 // ..
 }
 
 pub trait ShmemData {
@@ -86,6 +106,19 @@ pub trait ShmemData {
             Err(OwnerError(Self::OWNER_ID, self.get_owner()))
         } else {
             Ok(())
+        }
+    }
+
+    fn set_handle(&self, id: [u8; 4]) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(id.as_ptr(), self.ptr().add(handle_offset()), id.len());
+        }
+    }
+
+    fn get_handle(&self) -> [u8; 4] {
+        unsafe {
+            let s = slice::from_raw_parts(self.ptr().add(handle_offset()), 4);
+            *(s.as_ptr() as *const [u8; 4])
         }
     }
 
@@ -134,11 +167,9 @@ pub trait ShmemData {
         self.set_len(data.len() as u16)?;
 
         unsafe {
-            use std::ptr::copy_nonoverlapping;
-
             let ptr = self.ptr().add(data_offset());
 
-            copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
         }
 
         self.set_owner(Self::SIBLING_ID);
@@ -147,43 +178,18 @@ pub trait ShmemData {
     }
 }
 
-fn pipe_path(id: u32) -> String {
-    format!(r#"\\.\pipe\r{id}"#)
+pub fn shmem_path(temp_dir: &impl AsRef<Path>) -> PathBuf {
+    temp_dir.as_ref().join("shmem")
 }
 
-fn module_pipe_path(id: u32) -> String {
-    format!(r#"\\.\pipe\rm{id}"#)
+#[inline]
+pub fn pipe_path(id: u32) -> String {
+    format!(r#"\\.\pipe\r{}"#, itoa::Buffer::new().format(id))
 }
 
-use interprocess::os::windows::named_pipe::{
-    self, DuplexPipeStream, PipeListenerOptions, pipe_mode,
-};
-
-pub type PipeListenerTokio = named_pipe::tokio::PipeListener<pipe_mode::Bytes, pipe_mode::Bytes>;
-
-pub type PipeListenerSync = named_pipe::PipeListener<pipe_mode::Bytes, pipe_mode::Bytes>;
-
-pub type PipeTokio = named_pipe::tokio::PipeStream<pipe_mode::Bytes, pipe_mode::Bytes>;
-pub type PipeSync = named_pipe::PipeStream<pipe_mode::Bytes, pipe_mode::Bytes>;
-
-pub fn new_pipe(id: u32) -> std::io::Result<PipeListenerTokio> {
-    PipeListenerOptions::new()
-        .path(pipe_path(id))
-        .create_tokio_duplex::<pipe_mode::Bytes>()
-}
-
-pub fn connect_pipe(id: u32) -> std::io::Result<DuplexPipeStream<pipe_mode::Bytes>> {
-    DuplexPipeStream::connect_by_path(pipe_path(id))
-}
-
-pub fn new_module_pipe(id: u32) -> std::io::Result<PipeListenerTokio> {
-    PipeListenerOptions::new()
-        .path(module_pipe_path(id))
-        .create_tokio_duplex::<pipe_mode::Bytes>()
-}
-
-pub fn connect_module_pipe(id: u32) -> std::io::Result<DuplexPipeStream<pipe_mode::Bytes>> {
-    DuplexPipeStream::connect_by_path(module_pipe_path(id))
+#[inline]
+pub fn module_pipe_path(id: u32) -> String {
+    format!(r#"\\.\pipe\rm{}"#, itoa::Buffer::new().format(id))
 }
 
 #[derive(Debug, Clone, Copy)]

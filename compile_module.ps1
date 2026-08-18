@@ -9,3 +9,7 @@ $env:LUA_LIB = $LUA_PATH
 # then use that to compile it with mlua in the lua module
 cargo build --package lua_module --profile lua
 Copy "target/lua/lua_module.dll" "prebuilt/lua_module.dll"
+
+# build one with tracing enabled
+cargo build --package lua_module --profile lua --features tracing
+Copy "target/lua/lua_module.dll" "prebuilt/lua_module_tracing.dll"

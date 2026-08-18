@@ -10,7 +10,9 @@ repository = "https://github.com/VilleOlof/resolved"
 authors = ["VilleOlof"]
 
 [dependencies]
-serde = { workspace = true }
-shared_memory = "0.12.4"
-interprocess = { version = "2.4.3", features = ["tokio"] }
 thiserror = { workspace = true }
+serde = { workspace = true }
+rmpv = { workspace = true }
+itoa = { workspace = true }
+shared_memory = "0.12.4"
+directories = "6.0.0"
