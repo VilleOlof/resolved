@@ -284,7 +284,7 @@ use resolved::prelude::*;
 async fn main() -> ResolveResult<()> {
     let resolve = Resolve::new().await?;
 
-    let media_storage = resolve.store("self:GetMediaStorage").await?;
+    let media_storage = resolve.store("self:GetMediaStorage()").await?;
     
     let script = Script::new(
             r#"return media:GetFileList("/")"#
@@ -321,7 +321,7 @@ async fn main() -> ResolveResult<()> {
     }).await?;
     assert_eq!(8, result);
 
-    let media = resolve.store("self:GetMediaStorage").await?;
+    let media = resolve.store(script! { self:GetMediaStorage() }).await?;
     // Reference ItemRef's with: `@`
     let result: Vec<String> = resolve.execute(script! {
         return @media:GetFileList("/")

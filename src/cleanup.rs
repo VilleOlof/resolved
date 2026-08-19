@@ -45,7 +45,7 @@ pub async fn check() -> Result<(), Error> {
 
         match lock_file.try_lock() {
             Ok(()) => (),
-            Err(TryLockError::WouldBlock) => return println!("wouldblock"),
+            Err(TryLockError::WouldBlock) => return,
             Err(e) => {
                 eprintln!("failed to see lock: {e:?}");
                 return;
@@ -103,6 +103,11 @@ async fn run_cleanup(base: PathBuf) -> Result<(), Error> {
     for dir in base.read_dir()? {
         let dir = dir?;
 
+        // this should only be the .lock file
+        if dir.file_type()?.is_file() {
+            continue;
+        }
+
         if !is_old(&dir, now)? {
             continue;
         }
@@ -119,7 +124,7 @@ async fn run_cleanup(base: PathBuf) -> Result<(), Error> {
             Ok(()) => (),
         }
 
-        remove_dir_all(dir.path()).await?;
+        remove_dir_all(dir.path()).await?; // spookys
         cleaned += 1;
     }
 

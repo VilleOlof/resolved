@@ -135,16 +135,17 @@ fn criterion_benchmark(c: &mut Criterion) {
     // we push all instances here so the drop impl on the fields dont run until after
     // the drop removes files and does cleaning which slows heavily down the benchmarking by over twice as slow
     // and is not really what we want, we just wanna see times for creation, not dropping
-    let instances = Arc::new(tokio::sync::Mutex::new(vec![]));
+    // let instances = Arc::new(tokio::sync::Mutex::new(vec![]));
     create.bench_function("resolve", |b| {
         b.to_async(&rt).iter(|| async {
             let r = Resolve::new_with_config(&benchmark_config()).await.unwrap();
-            {
-                instances.lock().await.push(r);
-            }
+            std::hint::black_box(r);
+            // {
+            //     instances.lock().await.push(r);
+            // }
         });
     });
-    let _ = instances;
+    // let _ = instances;
 
     // these spike your cpu to 100% and freezes shit, spooky for now
     // create.bench_function("pool1", |b| {

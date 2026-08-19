@@ -1,8 +1,7 @@
 use std::{path::Path, time::Duration};
 
 use resolved_shared::{
-    MsgPacket, PipeFlag, SIZE, ScriptResponse, ShmemConf, ShmemData, ShmemDataError, ShmemOwner,
-    shmem_struct,
+    MsgPacket, PipeFlag, SIZE, ScriptResponse, ShmemConf, ShmemData, ShmemOwner, shmem_struct,
 };
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -126,7 +125,7 @@ impl Resolve {
             return Err(Error::WrongHandle(handle, stored_handle));
         }
 
-        let data = handler.shmem.read_data().map_err(ShmemDataError::Owner)?;
+        let data = handler.shmem.read_data()?;
 
         #[cfg(feature = "tracing")]
         let request = time.elapsed();

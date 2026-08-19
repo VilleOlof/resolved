@@ -141,8 +141,10 @@ pub trait ShmemData {
         }
 
         let len_size = size_of::<u16>();
-        // we can safety cast to u16 since it must be less than `SIZE` which is less than u16::MAX
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "we can safety cast to u16 since it must be less than `SIZE` which is less than u16::MAX"
+        )]
         let len_be = (len as u16).to_be_bytes();
 
         unsafe {
@@ -158,7 +160,7 @@ pub trait ShmemData {
     ///
     /// # Errors
     /// If the owner is wrong
-    fn read_data(&self) -> Result<&[u8], OwnerError> {
+    fn read_data(&self) -> Result<&[u8], ShmemDataError> {
         self.check_owner()?;
 
         let len = self.get_len();

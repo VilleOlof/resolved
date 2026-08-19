@@ -239,7 +239,7 @@ impl Resolve {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::Ok {
                 value,
-                #[allow(unused_variables)]
+                #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
                 eval_time,
             } => {
                 log_script_resposne!(script, eval_time, "execute");
@@ -290,7 +290,7 @@ impl Resolve {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::Ok {
                 value,
-                #[allow(unused_variables)]
+                #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
                 eval_time,
             } => {
                 log_script_resposne!(script, eval_time, "store");
@@ -334,7 +334,7 @@ impl Resolve {
             resolved_shared::ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             resolved_shared::ScriptResponse::Ok {
                 value: (source, list),
-                #[allow(unused_variables)]
+                #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
                 eval_time,
             } => {
                 log_script_resposne!(script, eval_time, "store_list");

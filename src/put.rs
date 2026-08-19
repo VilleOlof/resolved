@@ -48,8 +48,10 @@ impl<'s> ShmemPut<'s> {
 
     /// Once all data has been written this writes the length of the data written to the length bytes of the shared memory
     pub fn finish(self) -> usize {
-        // put_data and its len checks enforce that this fits
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "put_data and its len checks enforce that this fits"
+        )]
         let total_data_len = self.cursor as u16;
 
         let len_size = size_of::<u16>();
@@ -122,6 +124,137 @@ impl<'s> ShmemPut<'s> {
                 }
             }
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use resolved_shared::{ShmemConf, shmem_struct};
+
+    use super::*;
+
+    fn mem_path() -> PathBuf {
+        std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!(".shared_memory_{}", fastrand::u64(..)))
+    }
+
+    shmem_struct!(ShmemModule, (Module => Client));
+    impl ShmemModule {
+        pub fn new(path: impl AsRef<Path>) -> Self {
+            let _schmem = ShmemConf::new().flink(path).open().unwrap();
+            Self {
+                ptr: _schmem.as_ptr(),
+                _schmem,
+            }
+        }
+    }
+
+    fn new_pair() -> (ShmemClient, ShmemModule) {
+        let path = mem_path();
+        let client = ShmemClient::new(&path).unwrap();
+        let module = ShmemModule::new(&path);
+        (client, module)
+    }
+
+    /// Asserts that an `expr` *(which returns a [`Result`])* matches a `pat`
+    macro_rules! assert_error {
+        ($err:pat = $run:expr, $($arg:tt)+) => {
+            #[allow(irrefutable_let_patterns, reason = "this basically becomes a err() check, but could allow nested values to be checked")]
+            let $err = $run.err().expect("Expected an Err(_), got an Ok(_) value") else {
+                panic!($($arg)+);
+            };
+        };
+        ($err:pat = $run:expr $(,)?) => {
+            assert_error!($err = $run, "Got the wrong error type");
+        };
+    }
+
+    #[test]
+    fn new() -> Result<(), Error> {
+        let (client, _) = new_pair();
+        // client owner byte is 0, and since all is 0 it starts with the ownership
+        assert!(client.check_owner().is_ok());
+        // all data in shmem are 0
+        assert_eq!([0, 0, 0, 0], client.get_handle());
+        assert_eq!(0, client.get_len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn synced() -> Result<(), Error> {
+        let (client, module) = new_pair();
+
+        client.write_data(&[55])?;
+
+        assert_eq!([55], module.read_data()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_owner() -> Result<(), Error> {
+        let (_, module) = new_pair();
+
+        // if we dont write anything the owner stays at the client, which is invalid for our module
+        assert_error!(
+            ShmemDataError::Owner(_) = module.read_data(),
+            "Expected OwnerError"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn handle() -> Result<(), Error> {
+        let (client, module) = new_pair();
+
+        client.set_handle([1, 2, 3, 4]);
+        client.set_owner(ShmemClient::SIBLING_ID);
+
+        assert_eq!([1, 2, 3, 4], module.get_handle());
+
+        Ok(())
+    }
+
+    #[test]
+    fn len() -> Result<(), Error> {
+        let (client, module) = new_pair();
+
+        client.write_data(&[0, 1, 0, 1, 1, 0, 0])?;
+
+        assert_eq!(7, module.get_len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn exceeded_memory() -> Result<(), Error> {
+        let (client, _) = new_pair();
+
+        assert_error!(MemoryLimitExceeded(_, _) = client.set_len(usize::MAX));
+        assert_error!(MemoryLimitExceeded(_, _) = client.set_len(SIZE - DATA_OFFSET));
+
+        Ok(())
+    }
+
+    #[test]
+    fn round_trip() -> Result<(), Error> {
+        let (client, module) = new_pair();
+
+        client.write_data(&[1, 2, 3, 4, 5])?;
+
+        let data = module.read_data()?;
+        let rev: Vec<u8> = data.iter().map(|x| *x).rev().collect();
+        module.write_data(&rev)?;
+
+        assert_eq!([5, 4, 3, 2, 1], client.read_data()?);
 
         Ok(())
     }

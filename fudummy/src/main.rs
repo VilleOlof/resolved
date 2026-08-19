@@ -21,9 +21,11 @@ fn main() {
         .expect("failed to execute loaded script");
 }
 
+/// Userdata so we can give the proper values to the module
 struct Resolve;
 impl LuaUserData for Resolve {}
 
+/// Same arguments as fuscript, but only those that we ever give it
 struct Args {
     script_path: PathBuf,
 }
@@ -31,7 +33,7 @@ struct Args {
 impl Args {
     fn load() -> Self {
         let mut args = std::env::args().skip(1);
-        let _quiet = args.next().expect("no -q flag");
+        let _quiet = args.next().expect("no -q flag"); // we just discard this
         let path = args.next().expect("no script path");
 
         let script_path = PathBuf::from(path);

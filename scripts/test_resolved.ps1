@@ -1,0 +1,1 @@
+cargo test -- --skip dummy --skip resolve

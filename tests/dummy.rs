@@ -1,5 +1,17 @@
 //! Tests that can use the `fudummy` binary instead of `fuscript`, or the real DaVinci Resolve.
 
+/// Asserts that an `expr` *(which returns a [`Result`])* matches a `pat`
+macro_rules! assert_error {
+        ($err:pat = $run:expr, $($arg:tt)+) => {
+            let $err = $run.err().expect("Expected an Err(_), got an Ok(_) value") else {
+                panic!($($arg)+);
+            };
+        };
+        ($err:pat = $run:expr $(,)?) => {
+            assert_error!($err = $run, "Got the wrong error type");
+        };
+    }
+
 mod dummy {
     use std::time::Duration;
 
@@ -21,14 +33,10 @@ mod dummy {
     async fn module_error() -> ResolveResult<()> {
         let resolve = Resolve::new().await?;
 
-        let Error::LuaModuleErr(_) = resolve
-            .execute::<()>("<invalid lua syntax>")
-            .await
-            .err()
-            .unwrap()
-        else {
-            panic!("wrong error type, expected LuaModuleErr")
-        };
+        assert_error!(
+            Error::LuaModuleErr(_) = resolve.execute::<()>("<invalid lua syntax>").await,
+            "Expected LuaModuleErr"
+        );
 
         Ok(())
     }
@@ -138,9 +146,10 @@ mod dummy {
         let fake_item = unsafe { ItemRef::new(resolve.clone(), id) };
 
         // error since the id doesnt exist in handler
-        let Error::LuaModuleErr(_) = fake_item.execute::<()>("").await.err().unwrap() else {
-            panic!("wrong error type, expected LuaModuleErr")
-        };
+        assert_error!(
+            Error::LuaModuleErr(_) = fake_item.execute::<()>("").await,
+            "Expected LuaModuleErr"
+        );
 
         Ok(())
     }
@@ -153,9 +162,10 @@ mod dummy {
         item.execute::<()>("").await?;
         unsafe { ItemRef::manual_drop(resolve, item.id()).await };
 
-        let Error::LuaModuleErr(_) = item.execute::<()>("").await.err().unwrap() else {
-            panic!("wrong error type, expected LuaModuleErr")
-        };
+        assert_error!(
+            Error::LuaModuleErr(_) = item.execute::<()>("").await,
+            "Expected LuaModuleErr"
+        );
 
         // item's real Drop is called here but vale.dropped will have been set to true so it doesnt run
 
@@ -231,9 +241,10 @@ mod dummy {
 
             // item id was dropped in the batch drop from the list drop
             // so all of them should return a LuaModuleErr
-            let Error::LuaModuleErr(_) = item.value::<i32>().await.err().unwrap() else {
-                panic!("wrong error type, expected LuaModuleErr")
-            };
+            assert_error!(
+                Error::LuaModuleErr(_) = item.value::<i32>().await,
+                "Expected LuaModuleErr"
+            );
         }
 
         Ok(())
@@ -392,10 +403,10 @@ mod dummy {
         let mut script = Script::new("return 1");
         script = script.arg_ref(&a_ref)?;
 
-        let Error::MismatchedItemRef(_, _) = b_ref.execute::<i32>(script).await.err().unwrap()
-        else {
-            panic!("wrong error type, expected MismatchedItemRef")
-        };
+        assert_error!(
+            Error::MismatchedItemRef(_, _) = b_ref.execute::<i32>(script).await,
+            "Expected MismatchedItemRef"
+        );
 
         Ok(())
     }
@@ -414,14 +425,12 @@ mod dummy {
     async fn script_timeout() -> Result<(), Error> {
         let resolve = Resolve::new().await?;
 
-        let Error::ScriptTimeout(_) = resolve
-            .execute::<()>(Script::new("sleep(100)").with_timeout(Duration::from_millis(1)))
-            .await
-            .err()
-            .unwrap()
-        else {
-            panic!("wrong error type, expected ScriptTimeout")
-        };
+        assert_error!(
+            Error::ScriptTimeout(_) = resolve
+                .execute::<()>(Script::new("sleep(100)").with_timeout(Duration::from_millis(1)))
+                .await,
+            "Expected ScriptTimeout"
+        );
 
         Ok(())
     }
@@ -435,23 +444,19 @@ mod dummy {
         //  get response from #1
         // expect wronghandle
 
-        let Error::ScriptTimeout(_) = resolve
-            .execute::<()>(Script::new("sleep(500)").with_timeout(Duration::from_millis(1)))
-            .await
-            .err()
-            .unwrap()
-        else {
-            panic!("wrong error type, expected ScriptTimeout")
-        };
+        assert_error!(
+            Error::ScriptTimeout(_) = resolve
+                .execute::<()>(Script::new("sleep(500)").with_timeout(Duration::from_millis(1)))
+                .await,
+            "Expected ScriptTimeout"
+        );
 
-        let Error::WrongHandle(_, _) = resolve
-            .execute::<()>(Script::new("5").with_timeout(Duration::from_secs(10)))
-            .await
-            .err()
-            .unwrap()
-        else {
-            panic!("wrong error type, expected ScriptTimeout")
-        };
+        assert_error!(
+            Error::WrongHandle(_, _) = resolve
+                .execute::<()>(Script::new("5").with_timeout(Duration::from_secs(10)))
+                .await,
+            "Expected WrongHandle"
+        );
 
         Ok(())
     }

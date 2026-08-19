@@ -275,13 +275,12 @@ mod tests {
         table.set("age", 31)?;
         table.set("expires", 5)?;
 
-        assert_eq!(
-            vec!["age", "expires"],
-            table_keys(&table)?
-                .iter()
-                .map(|x| x.as_string().unwrap().to_string_lossy())
-                .collect::<Vec<String>>()
-        );
+        let mut keys = table_keys(&table)?
+            .iter()
+            .map(|x| x.as_string().unwrap().to_string_lossy())
+            .collect::<Vec<String>>();
+        keys.sort();
+        assert_eq!(vec!["age", "expires"], keys);
 
         table.remove("age")?;
         assert_eq!(
@@ -294,6 +293,15 @@ mod tests {
 
         let table = lua.create_table()?;
         assert!(table_keys(&table)?.is_empty());
+
+        table.push("bleh")?;
+        assert_eq!(
+            vec![1],
+            table_keys(&table)?
+                .iter()
+                .map(|x| x.as_i32().unwrap())
+                .collect::<Vec<i32>>()
+        );
 
         Ok(())
     }

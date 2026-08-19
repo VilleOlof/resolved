@@ -47,6 +47,8 @@ use crate::{Error, ItemRef, owned_script::OwnedScript};
 /// let value: i32 = resolve.execute(script).await?;
 /// assert_eq!(20, value);
 /// ```
+///
+/// For an owned variant with no references, see: [`OwnedScript`] and [`as_owned`](Script::as_owned)
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Script<'c> {
     /// The code to be loaded and executed in the lua module
