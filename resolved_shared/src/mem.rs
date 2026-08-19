@@ -46,6 +46,8 @@ pub enum ShmemOwner {
 }
 
 impl ShmemOwner {
+    #[inline]
+    #[must_use]
     pub fn from_u8(u: u8) -> Option<Self> {
         match u {
             0 => Some(Self::Client),
@@ -61,85 +63,90 @@ impl ShmemOwner {
 // 2 byte  > data length
 // _ bytes > data
 
-#[inline]
-pub const fn ownership_offset() -> usize {
-    0 // 1 byte width
-}
+const BASE_SIZE: usize = 0;
+const OWNERSHIP_SIZE: usize = 1;
+const PACKET_SIZE: usize = 1;
+const HANDLE_SIZE: usize = 4;
+const LEN_SIZE: usize = 2;
 
-#[inline]
-pub const fn type_offset() -> usize {
-    0 + 1 // 1 byte width
-}
-
-#[inline]
-pub const fn handle_offset() -> usize {
-    0 + 1 + 1 // 4 byte width
-}
-
-#[inline]
-pub const fn len_offset() -> usize {
-    0 + 1 + 1 + 4 // 2 byte width
-}
-
-#[inline]
-pub const fn data_offset() -> usize {
-    0 + 1 + 1 + 4 + 2 // ..
-}
+pub const OWNERSHIP_OFFSET: usize = BASE_SIZE;
+pub const TYPE_OFFSET: usize = BASE_SIZE + OWNERSHIP_SIZE;
+pub const HANDLE_OFFSET: usize = BASE_SIZE + OWNERSHIP_SIZE + PACKET_SIZE;
+pub const LEN_OFFSET: usize = BASE_SIZE + OWNERSHIP_SIZE + PACKET_SIZE + HANDLE_SIZE;
+pub const DATA_OFFSET: usize = BASE_SIZE + OWNERSHIP_SIZE + PACKET_SIZE + HANDLE_SIZE + LEN_SIZE; // ..
 
 pub trait ShmemData {
+    /// This process owner variant
     const OWNER_ID: ShmemOwner;
+    /// The opposite owner variant
     const SIBLING_ID: ShmemOwner;
 
+    /// The ptr to the start of the shared memory
     fn ptr(&self) -> *mut u8;
 
+    /// Returns the owner of the shared memory
     fn get_owner(&self) -> ShmemOwner {
         unsafe {
             ShmemOwner::from_u8(std::ptr::read_volatile(self.ptr()))
                 .expect("failed to read from shared memory ptr")
         }
     }
+    /// Sets the current owner byte
     fn set_owner(&self, owner: ShmemOwner) {
         unsafe { std::ptr::write_volatile(self.ptr(), owner as u8) }
     }
+    /// Checks if the owner of the shared memory matches the current process
+    ///
+    /// # Errors
+    /// If the owner is wrong
     fn check_owner(&self) -> Result<(), OwnerError> {
-        if self.get_owner() != Self::OWNER_ID {
-            Err(OwnerError(Self::OWNER_ID, self.get_owner()))
-        } else {
+        if self.get_owner() == Self::OWNER_ID {
             Ok(())
+        } else {
+            Err(OwnerError(Self::OWNER_ID, self.get_owner()))
         }
     }
 
+    /// Sets the handle id
     fn set_handle(&self, id: [u8; 4]) {
         unsafe {
-            std::ptr::copy_nonoverlapping(id.as_ptr(), self.ptr().add(handle_offset()), id.len());
+            std::ptr::copy_nonoverlapping(id.as_ptr(), self.ptr().add(HANDLE_OFFSET), id.len());
         }
     }
 
+    /// Returns the handle id field
     fn get_handle(&self) -> [u8; 4] {
         unsafe {
-            let s = slice::from_raw_parts(self.ptr().add(handle_offset()), 4);
-            *(s.as_ptr() as *const [u8; 4])
+            let s = slice::from_raw_parts(self.ptr().add(HANDLE_OFFSET), 4);
+            *s.as_ptr().cast::<[u8; 4]>()
         }
     }
 
+    /// Returns the length field
     fn get_len(&self) -> usize {
         unsafe {
-            let ptr = self.ptr().add(len_offset());
-            let len_be = slice::from_raw_parts(ptr as *const u8, size_of::<u16>());
+            let ptr = self.ptr().add(LEN_OFFSET);
+            let len_be = slice::from_raw_parts(ptr.cast_const(), size_of::<u16>());
             u16::from_be_bytes(len_be.try_into().expect("size_of ensures this is valid")) as usize
         }
     }
 
-    fn set_len(&self, len: u16) -> Result<(), MemoryLimitExceeded> {
-        let len_size = size_of::<u16>();
-        let len_be = len.to_be_bytes();
-
-        if (len as usize) >= SIZE {
-            return Err(MemoryLimitExceeded(SIZE, len as usize));
+    /// Sets the length field, must be less than the size limit
+    ///
+    /// # Errors
+    /// If the len is more than [`SIZE`]
+    fn set_len(&self, len: usize) -> Result<(), MemoryLimitExceeded> {
+        if len >= (SIZE - DATA_OFFSET) {
+            return Err(MemoryLimitExceeded(SIZE - DATA_OFFSET, len));
         }
 
+        let len_size = size_of::<u16>();
+        // we can safety cast to u16 since it must be less than `SIZE` which is less than u16::MAX
+        #[allow(clippy::cast_possible_truncation)]
+        let len_be = (len as u16).to_be_bytes();
+
         unsafe {
-            let ptr = self.ptr().add(len_offset());
+            let ptr = self.ptr().add(LEN_OFFSET);
 
             std::ptr::copy_nonoverlapping(len_be.as_ptr(), ptr, len_size);
         }
@@ -147,27 +154,33 @@ pub trait ShmemData {
         Ok(())
     }
 
-    #[must_use]
-    fn read_data<'s>(&self) -> Result<&'s [u8], OwnerError> {
+    /// Returns the data buffer from the shared memory
+    ///
+    /// # Errors
+    /// If the owner is wrong
+    fn read_data(&self) -> Result<&[u8], OwnerError> {
         self.check_owner()?;
 
         let len = self.get_len();
 
         unsafe {
-            let ptr = self.ptr().add(data_offset());
+            let ptr = self.ptr().add(DATA_OFFSET);
             let data = slice::from_raw_parts(ptr, len);
             Ok(data)
         }
     }
 
-    #[must_use]
-    fn write_data<'s>(&'s self, data: &[u8]) -> Result<(), ShmemDataError> {
+    /// Writes some data to the shared memory buffer and sets the length field
+    ///
+    /// # Errors
+    /// If the data would write past the limit of the shared memory or if the owner is wrong
+    fn write_data(&self, data: &[u8]) -> Result<(), ShmemDataError> {
         self.check_owner()?;
 
-        self.set_len(data.len() as u16)?;
+        self.set_len(data.len())?;
 
         unsafe {
-            let ptr = self.ptr().add(data_offset());
+            let ptr = self.ptr().add(DATA_OFFSET);
 
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
         }
@@ -183,13 +196,15 @@ pub fn shmem_path(temp_dir: &impl AsRef<Path>) -> PathBuf {
 }
 
 #[inline]
+#[must_use]
 pub fn pipe_path(id: u32) -> String {
-    format!(r#"\\.\pipe\r{}"#, itoa::Buffer::new().format(id))
+    format!(r"\\.\pipe\r{}", itoa::Buffer::new().format(id))
 }
 
 #[inline]
+#[must_use]
 pub fn module_pipe_path(id: u32) -> String {
-    format!(r#"\\.\pipe\rm{}"#, itoa::Buffer::new().format(id))
+    format!(r"\\.\pipe\rm{}", itoa::Buffer::new().format(id))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -201,11 +216,11 @@ pub enum PipeFlag {
 
 #[derive(Debug, thiserror::Error)]
 #[error("Got the wrong owner of shared memory, expected {0:?}, but got {1:?}")]
-pub struct OwnerError(ShmemOwner, ShmemOwner);
+pub struct OwnerError(pub ShmemOwner, pub ShmemOwner);
 
 #[derive(Debug, thiserror::Error)]
 #[error("Tried to set len too high, limit is: {0:?}, but tried to set it to: {1:?}")]
-pub struct MemoryLimitExceeded(usize, usize);
+pub struct MemoryLimitExceeded(pub usize, pub usize);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShmemDataError {

@@ -80,11 +80,10 @@ pub(crate) async fn spawn_script_server(
 
     match cmd.spawn() {
         Err(e) => {
-            eprintln!("{e:?}");
             *cancelled.write() = true;
-            return Err(e.into());
+            Err(e.into())
         }
-        Ok(handle) => return Ok(handle),
+        Ok(handle) => Ok(handle),
     }
 }
 
@@ -106,17 +105,14 @@ pub(crate) async fn handle_module_request(
 
     // timeout, or if the module pipe connects (module is ready), or the module errors in setup
     select! {
-        () = &mut sleep => {
-            Err(Error::ModuleTimeout)
-        }
-        pipe = pipe.accept() => return Ok(pipe?),
+        () = &mut sleep => Err(Error::ModuleTimeout),
+        pipe = pipe.accept() => Ok(pipe?),
         p = module_pipe.read_u8() => {
             let packet_type = PrePacket::from_u8(p?).ok_or(Error::InvalidPacketType)?;
             match packet_type {
-                PrePacket::Ready => unimplemented!(),
                 PrePacket::NoResolve => Err(Error::UnableToReachDavinciResolve),
                 PrePacket::Error => Err(read_err(module_pipe).await?),
-                _ => unreachable!("ping/pong requests can't be sent yet")
+                PrePacket::Configuration => unreachable!("configuration was already sent")
             }
         }
     }

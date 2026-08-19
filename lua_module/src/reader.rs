@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use mlua::prelude::*;
-use resolved_shared::{ArgType, MsgPacket, ShmemData, data_offset, type_offset};
+use resolved_shared::{ArgType, DATA_OFFSET, MsgPacket, ShmemData, TYPE_OFFSET};
 
 use crate::{
     Buffers, GLOBAL_ARG, GLOBAL_SELF, ShmemModule, error::RequestError, execute,
@@ -45,12 +45,12 @@ impl<'s> ShmemReader<'s> {
     }
 
     fn curr_ptr(&self) -> *mut u8 {
-        unsafe { self.shmem.ptr.add(data_offset() + self.cursor) }
+        unsafe { self.shmem.ptr.add(DATA_OFFSET + self.cursor) }
     }
 
     pub fn get_packet(&self) -> Result<MsgPacket, RequestError> {
         unsafe {
-            let ptr = self.shmem.ptr.add(type_offset());
+            let ptr = self.shmem.ptr.add(TYPE_OFFSET);
             let byte = std::ptr::read_volatile(ptr);
             MsgPacket::from_u8(byte).ok_or(RequestError::InvalidPacketType(byte))
         }

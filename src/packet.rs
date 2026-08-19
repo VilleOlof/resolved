@@ -16,11 +16,6 @@ macro_rules! log_id {
     };
 }
 
-// 1 byte   > ownership of shared memory
-// 1 byte   > MsgPacket (only written by the client)
-// 2 bytes  > Payload length (max size is 32768 so fits in u16)
-// .. bytes > Payload, written directly
-
 shmem_struct!(ShmemClient, (Client => Module));
 
 impl ShmemClient {
@@ -51,6 +46,15 @@ impl Resolve {
         R: FnOnce(&[u8]) -> Result<T, Error>,
         T: DeserializeOwned,
     {
+        async fn wait(handler: &mut PacketHandler) -> Result<(), Error> {
+            let res = handler.pipe.read_u8().await?;
+            if PipeFlag::ModuleSent as u8 != res {
+                return Err(Error::InvalidPipeFlag(PipeFlag::ModuleSent as u8, res));
+            }
+
+            Ok(())
+        }
+
         if self.cancelled() {
             return Err(Error::ModuleNotRunning);
         }
@@ -95,24 +99,14 @@ impl Resolve {
         #[cfg(feature = "tracing")]
         tracing::trace!(data_len, "Sent packet");
 
-        async fn wait(handler: &mut PacketHandler) -> Result<(), Error> {
-            let res = handler.pipe.read_u8().await?;
-            if PipeFlag::ModuleSent as u8 != res {
-                return Err(Error::InvalidPipeFlag(PipeFlag::ModuleSent as u8, res));
-            }
-
-            Ok(())
-        }
-
         let timeout = specified_timeout.unwrap_or(self.timeout());
-        match tokio::time::timeout(timeout, wait(&mut handler)).await {
-            Ok(w) => w?,
-            Err(_) => {
-                // we take ownership even if fail
-                // module silently errors on this
-                handler.shmem.set_owner(ShmemOwner::Client);
-                return Err(Error::ScriptTimeout(timeout));
-            }
+        if let Ok(w) = tokio::time::timeout(timeout, wait(&mut handler)).await {
+            w?;
+        } else {
+            // we take ownership even if fail
+            // module silently errors on this
+            handler.shmem.set_owner(ShmemOwner::Client);
+            return Err(Error::ScriptTimeout(timeout));
         }
 
         // we generate a handle, set it
@@ -132,10 +126,7 @@ impl Resolve {
             return Err(Error::WrongHandle(handle, stored_handle));
         }
 
-        let data = handler
-            .shmem
-            .read_data()
-            .map_err(|e| ShmemDataError::Owner(e))?;
+        let data = handler.shmem.read_data().map_err(ShmemDataError::Owner)?;
 
         #[cfg(feature = "tracing")]
         let request = time.elapsed();
@@ -199,7 +190,7 @@ impl Resolve {
                 MsgPacket::DropItem,
                 None,
                 |data| {
-                    data.put_data(&id.to_be_bytes());
+                    data.put_data(&id.to_be_bytes())?;
                     Ok(())
                 },
                 |_| Ok(()),
@@ -216,9 +207,9 @@ impl Resolve {
                 MsgPacket::DropMany,
                 None,
                 |data| {
-                    data.put_data(&u32::try_from(ids.len())?.to_be_bytes());
+                    data.put_data(&u32::try_from(ids.len())?.to_be_bytes())?;
                     for id in ids {
-                        data.put_data(&id.to_be_bytes());
+                        data.put_data(&id.to_be_bytes())?;
                     }
                     Ok(())
                 },
@@ -239,7 +230,7 @@ impl Resolve {
                 MsgPacket::TableKeys,
                 None,
                 |data| {
-                    data.put_data(&id.to_be_bytes());
+                    data.put_data(&id.to_be_bytes())?;
                     Ok(())
                 },
                 |buf| Ok(rmp_serde::from_slice(buf)?),
@@ -259,7 +250,7 @@ impl Resolve {
                 MsgPacket::ItemValue,
                 None,
                 |data| {
-                    data.put_data(&id.to_be_bytes());
+                    data.put_data(&id.to_be_bytes())?;
                     Ok(())
                 },
                 |buf| Ok(rmp_serde::from_slice(buf)?),

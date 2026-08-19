@@ -32,6 +32,8 @@ pub struct RefList<'s> {
 
 impl<'s> RefList<'s> {
     /// Returns a slice of all [`ItemRef`]'s
+    #[inline]
+    #[must_use]
     pub fn refs(&'s self) -> &'s [ItemRef] {
         &self.guard.refs
     }
@@ -66,7 +68,7 @@ impl ItemRefList {
         T: DeserializeOwned,
     {
         let source = &self.read().source;
-        source.resolve().table_keys(&source).await
+        source.resolve().table_keys(source).await
     }
 
     /// Returns a list of all [`ItemRef`]'s
@@ -83,12 +85,14 @@ impl ItemRefList {
     /// }
     /// ```
     #[inline]
+    #[must_use]
     pub fn list(&self) -> RefList<'_> {
         RefList { guard: self.read() }
     }
 
     /// Returns the number of references stored in the list
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.read().refs.len()
     }
@@ -151,6 +155,12 @@ impl ItemRefList {
     ///
     /// If an [`ItemRef`] satisfies this list, it will be marked as dropped to prevent it's own [`Drop`] from running.
     /// And then it will send a `DropMany` packet to drop all of the [`ItemRef`] in one packet.
+    ///
+    /// # Panics
+    /// If an inner [`ItemRef`] `dropped` value is poisoned
+    ///
+    /// # Safety
+    /// This can drop id's which may not be counted in their reference
     pub unsafe fn drop_all(resolve: Resolve, refs: Vec<ItemRef>) {
         let to_drop: Vec<u64> = refs
             .into_iter()
@@ -169,7 +179,7 @@ impl ItemRefList {
 
         tokio::spawn(async move {
             if let Err(e) = resolve.send_drop_items(&to_drop).await {
-                eprintln!("{e:?}")
+                eprintln!("{e:?}");
             }
         });
     }

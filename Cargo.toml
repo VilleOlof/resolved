@@ -4,13 +4,13 @@ description = "Use DaVinci Resolve's Scripting API in Rust with Lua"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-readme = "readme.md"
+readme = "README.md"
 homepage = "https://github.com/VilleOlof/resolved"
 repository = "https://github.com/VilleOlof/resolved"
 authors = ["VilleOlof"]
 keywords = ["davinci-resolve", "scripting-api", "lua", "studio"]
 categories = ["api-bindings"]
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 
 [workspace]
 members = [

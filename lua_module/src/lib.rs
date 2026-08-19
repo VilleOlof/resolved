@@ -240,3 +240,76 @@ impl ShmemModule {
         Ok(Self { _schmem, ptr })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_clone() -> Result<(), ModuleError> {
+        let lua = Lua::new();
+
+        let table_1 = lua.create_table()?;
+        table_1.set("A", "B")?;
+
+        let table_1_clone = clone_table(&lua, &table_1)?;
+
+        // should have different underlying references
+        assert_ne!(table_1.to_pointer(), table_1_clone.to_pointer());
+
+        // the native .clone is the same underlying
+        let table_1_same = table_1.clone();
+        assert_eq!(table_1.to_pointer(), table_1_same.to_pointer());
+
+        let table_2 = lua.create_table()?;
+        assert_ne!(table_1, table_2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn keys() -> LuaResult<()> {
+        let lua = Lua::new();
+
+        let table = lua.create_table()?;
+        table.set("age", 31)?;
+        table.set("expires", 5)?;
+
+        assert_eq!(
+            vec!["age", "expires"],
+            table_keys(&table)?
+                .iter()
+                .map(|x| x.as_string().unwrap().to_string_lossy())
+                .collect::<Vec<String>>()
+        );
+
+        table.remove("age")?;
+        assert_eq!(
+            vec!["expires"],
+            table_keys(&table)?
+                .iter()
+                .map(|x| x.as_string().unwrap().to_string_lossy())
+                .collect::<Vec<String>>()
+        );
+
+        let table = lua.create_table()?;
+        assert!(table_keys(&table)?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_lua_code() -> Result<(), RequestError> {
+        let lua = Lua::new();
+
+        let (val, time) = execute(&lua, r#""cool!""#)?;
+        assert_eq!("cool!", val.as_string().unwrap().to_string_lossy());
+        assert!(time > Duration::ZERO);
+
+        let (val, time) = execute(&lua, "local a = 5\nreturn 1")?;
+        assert_eq!(1, val.as_i32().unwrap());
+        assert!(time > Duration::ZERO);
+
+        Ok(())
+    }
+}

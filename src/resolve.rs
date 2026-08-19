@@ -140,7 +140,7 @@ impl Resolve {
 
         let cancelled = Arc::new(RwLock::new(false));
 
-        let shmem = ShmemClient::new(&shmem_path(&instance_dir))?;
+        let shmem = ShmemClient::new(shmem_path(&instance_dir))?;
 
         let (child, module_pipe, pipe) =
             start(&instance_dir, config, cancelled.clone(), id).await?;
@@ -270,7 +270,7 @@ impl Resolve {
     /// # Errors
     /// If the module executing the code fails, if the script can't be sent or if the returned value is `nil`
     pub async fn store(&self, script: impl Into<Script<'_>>) -> Result<ItemRef, Error> {
-        Ok(self.store_option(script).await?.ok_or(Error::NilItemRef)?)
+        self.store_option(script).await?.ok_or(Error::NilItemRef)
     }
 
     /// Maybe stores a reference to `Lua` value in `Rust`
@@ -294,10 +294,7 @@ impl Resolve {
                 eval_time,
             } => {
                 log_script_resposne!(script, eval_time, "store");
-                Ok(match value {
-                    Some(v) => Some(unsafe { ItemRef::new(self.clone(), v) }),
-                    None => None,
-                })
+                Ok(value.map(|v| unsafe { ItemRef::new(self.clone(), v) }))
             }
         }
     }
@@ -368,7 +365,7 @@ impl Resolve {
     /// # Errors
     /// If the module executing the code fails or if the script can't be sent,
     /// or if the referenced [`ItemRef`] is **not** a table
-    pub async fn table_keys<'c, T>(&self, item: &'c ItemRef) -> Result<Vec<T>, Error>
+    pub async fn table_keys<T>(&self, item: &ItemRef) -> Result<Vec<T>, Error>
     where
         T: DeserializeOwned,
     {
@@ -386,7 +383,7 @@ impl Resolve {
     }
 
     /// Returns the referenced value directly.
-    pub(crate) async fn item_value<'c, T>(&self, item: &'c ItemRef) -> Result<T, Error>
+    pub(crate) async fn item_value<T>(&self, item: &ItemRef) -> Result<T, Error>
     where
         T: DeserializeOwned,
     {
@@ -448,9 +445,11 @@ impl Resolve {
     ///
     /// Any other calls to this [`Resolve`] client and it's references will always return an [`Error::ModuleNotRunning`].
     ///
+    /// # Errors
+    /// If the `shutdown` packet fails to send to the module
+    ///
     /// # Safety
-    /// All functions become null and void and does nothing other than return errors.\
-    /// This function is normally called on [`Drop`]
+    /// All functions become null and void and does nothing other than return errors.
     pub async unsafe fn shutdown(&self) -> Result<(), Error> {
         self.send_shutdown().await?;
         self.inner.cancel();

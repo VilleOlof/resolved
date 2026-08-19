@@ -5,6 +5,7 @@ $env:LUA_LIB = $LUA_PATH
 # build fudummy test binary that replaces fuscript.exe
 cargo build --release --package fudummy
 
+$old_path = $env:Path;
 # add DaVinci Resolve's directory to path so fudummy can find `lua5.1.dll`
 $env:Path += ";C:/Program Files/Blackmagic Design/DaVinci Resolve"
 
@@ -17,3 +18,4 @@ cargo test dummy
 
 # Reset FUSCRIPT
 $env:FUSCRIPT = $OLD_FUSCRIPT
+$env:Path = $old_path

@@ -1,9 +1,7 @@
 #![doc = include_str!("../readme.md")]
 
 #[cfg(not(windows))]
-compile_error!(
-    "'resolved' only works on windows due to dll's, paths and the way the library is structured with lua modules. see #why-windows-only in the readme"
-);
+compile_error!("resolved only supports windows. see #why-windows-only in readme");
 
 mod cleanup;
 mod config;
@@ -34,7 +32,7 @@ pub use traits::{ResolveExecute, ResolveStore};
 
 /// Common types to fully utilize the crate
 pub mod prelude {
-    pub use super::{Error, ItemRef, Resolve, Script};
+    pub use super::{Error, Globals, ItemRef, Resolve, ResolveConfig, Script};
     pub type ResolveResult<T> = std::result::Result<T, Error>;
 
     #[cfg(feature = "macros")]
@@ -101,8 +99,8 @@ pub use resolved_macros::script;
 // - [] sanity check with friends if this seems good and get someone to try using it
 // - [X] move interprocess dep to workspace and only add tokio feature on crate & not in module
 // - [X] some mention of the unsafe code and which 3 files it exists in (shared/mem, lua_module/reader, src/put)
-// - [] tests for resolve_shared
-// - [] tests for lua_module
+// - [X] tests for resolve_shared
+// - [X] tests for lua_module
 // - [] tests for shmem
 // - [X] add a 4-8 byte random request id which must be validated for the request to be valid
 // - [X] set globals with resolveconfig, make their configs into functions since heap now with hashmap
@@ -119,7 +117,7 @@ pub use resolved_macros::script;
 //      !! since cleanup is now every x files and fresh ones wont get deleted this is fine
 // - [X] timeout in resolveconfig should be default and script should have Option<Duration>
 // - [X] dir() fn on resolve to return tempdir stored
-// - [] pedantic
+// - [X] pedantic
 // - [X] temp_dir cant remove vinci.dll since its still in-use since module is still running when client drops
 //      this leaves files which arent removed
 //      could have outer start function try and delete the folder since we got it in config
@@ -131,7 +129,7 @@ pub use resolved_macros::script;
 // - [X] add a .lock file to resolved_root which is held during cleanup
 //      so other instances in maybe other tasks/programs dont act while someone else is cleaning
 //      this check on the lock should be before they even count files at all
-// - [] think if we can add more options just in case
+// - [X] think if we can add more options just in case
 
 // add a 4-8 random byte seq as id into the shared mem layout, module stores a copy during request and at response (on one of the parts) of the id in shmem doesn’t match the stored they are diff requests and data is mismatched, so error
 // this can happen if the client sends a request, times out and begins a new request before the first one can respond, since the ownership will still be the module it will write back the old response but never read in the new request and just overwrite it

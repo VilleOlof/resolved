@@ -56,3 +56,35 @@ impl<'a> ItemRefHandler<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn works() -> Result<(), RequestError> {
+        let lua = Lua::new();
+
+        let mut handler = ItemRefHandler::new(&lua);
+        assert!(handler.keys.is_empty());
+
+        let id_1 = handler.insert(5)?;
+        assert_eq!(1, handler.keys.len());
+
+        assert_eq!(5, handler.get::<i32>(id_1)?);
+
+        let id_2 = handler.insert("value")?;
+        assert_eq!(2, handler.keys.len());
+
+        assert_eq!("value", handler.get::<String>(id_2)?);
+
+        handler.remove(id_1)?;
+        assert_eq!(1, handler.keys.len());
+        assert!(handler.get::<i32>(id_1).is_err());
+
+        assert_eq!("value", handler.get::<String>(id_2)?);
+        assert_eq!(2, handler.latest_id.0);
+
+        Ok(())
+    }
+}

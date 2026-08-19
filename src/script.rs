@@ -47,7 +47,7 @@ use crate::{Error, ItemRef, owned_script::OwnedScript};
 /// let value: i32 = resolve.execute(script).await?;
 /// assert_eq!(20, value);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Script<'c> {
     /// The code to be loaded and executed in the lua module
     pub(crate) lua: Cow<'c, str>,
@@ -61,17 +61,6 @@ pub struct Script<'c> {
     ///
     /// If not specified it will use the default configured timeout in the [`Resolve`](crate::Resolve) instance
     pub(crate) timeout: Option<Duration>,
-}
-
-impl Default for Script<'_> {
-    fn default() -> Self {
-        Script {
-            lua: Cow::default(),
-            args: Vec::default(),
-            with: Option::default(),
-            timeout: None,
-        }
-    }
 }
 
 /// The different types of argument.  
@@ -124,6 +113,7 @@ impl<'c> Script<'c> {
 
     /// The timeout on the scripts execution
     #[inline]
+    #[must_use]
     pub fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
@@ -134,6 +124,7 @@ impl<'c> Script<'c> {
     /// And you send another request, the first execution is still running and you will get a [`Error::WrongHandle`] error.\
     /// Scripts never gets killed prematurely even if you timeout on the client.
     #[inline]
+    #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self

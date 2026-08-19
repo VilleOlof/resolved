@@ -34,6 +34,25 @@ impl OwnedScript {
         }
     }
 
+    /// The timeout on the scripts execution
+    #[inline]
+    #[must_use]
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Changes the timeout of the scrips execution
+    ///
+    /// Beaware of setting this too low, if you timeout and the module takes a long time to execute your code.\
+    /// And you send another request, the first execution is still running and you will get a [`Error::WrongHandle`] error.\
+    /// Scripts never gets killed prematurely even if you timeout on the client.
+    #[inline]
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
     // we notably dont need to implement .with since all Scripts, owned or not gets converted into a ref Script before getting used internally in Resolve
 
     /// Pushes `value` to the global `arg` variable.

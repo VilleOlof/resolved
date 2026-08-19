@@ -444,8 +444,8 @@ But this is enough to test communication, packets, registries, references, seria
 
 ### Running Dummy Tests
 
-There is a `run_tests_with_dummy.ps1` script which automates some of the process of running dummy tests.  
-This expects the artifacts of `./compile_module.ps1` to exist in `/prebuilt`.
+There is a `scripts/run_tests_with_dummy.ps1` script which automates some of the process of running dummy tests.  
+This expects the artifacts of `./scripts/compile_module.ps1` to exist in `/prebuilt`.
 
 The script does the following:  
 - Builds `fudummy`
@@ -460,7 +460,7 @@ Then for the actual tests it needs `FUSCRIPT` to be pointing at the `fudummy` bi
 
 This `lua5.1.dll` can also be a `lua51.dll` but renamed to `lua5.1.dll` if you don't have *DaVinci Resolve* installed
 
-If the tests hang, panic or the `run_tests_with_dummy.ps1` script doesn't fully execute,  
+If the tests hang, panic or the `scripts/run_tests_with_dummy.ps1` script doesn't fully execute,  
 to reset your environment back to before:
 ```bash
 $env:FUSCRIPT = $null
@@ -487,6 +487,20 @@ cargo test resolve::version --features tracing -- --nocapture
 # or this for a fully* optimized test
 cargo test resolve::version --features tracing --profile bench -- --nocapture
 ```
+
+### Lua Module tests
+
+Theres lot a ton of tests for the module only since it requires a lot of things that the client does.  
+But there's still a few ones to test the ones that we can test.  
+
+These can simply be ran with: 
+```bash
+# in project root: 
+./scripts/test_module.ps1
+```
+
+To manually run it you can look at what that script does,  
+mostly it's setting up env variables for the module to compile properly.
 
 ## Unsafe
 

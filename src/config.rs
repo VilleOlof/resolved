@@ -26,18 +26,9 @@ pub struct ResolveConfig {
 }
 
 impl ResolveConfig {
-    /// Default configuration for all instances
-    pub fn default() -> Self {
-        Self {
-            timeout: Duration::from_secs(30),
-            reset_globals: true,
-            globals: Globals::default(),
-            tracing: false,
-            skip_cleanup: false,
-        }
-    }
-
     /// Default configuration except that globals don't get reset
+    #[inline]
+    #[must_use]
     pub fn keep_globals() -> Self {
         Self {
             timeout: Duration::from_secs(30),
@@ -52,26 +43,36 @@ impl ResolveConfig {
 // builders >
 impl ResolveConfig {
     /// Set's `timeout` to the specified value.
+    #[inline]
+    #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
     /// Set's `reset_globals` to the specified value.
+    #[inline]
+    #[must_use]
     pub fn reset_globals(mut self, reset_globals: bool) -> Self {
         self.reset_globals = reset_globals;
         self
     }
     /// Set's `globals` to the specified value.
+    #[inline]
+    #[must_use]
     pub fn globals(mut self, globals: Globals) -> Self {
         self.globals = globals;
         self
     }
     /// Set's `tracing` to the specified value.
+    #[inline]
+    #[must_use]
     pub fn tracing(mut self, tracing: bool) -> Self {
         self.tracing = tracing;
         self
     }
     /// Set's `skip_cleanup` to the specified value.
+    #[inline]
+    #[must_use]
     pub fn skip_cleanup(mut self, skip_cleanup: bool) -> Self {
         self.skip_cleanup = skip_cleanup;
         self
@@ -80,7 +81,13 @@ impl ResolveConfig {
 
 impl Default for ResolveConfig {
     fn default() -> Self {
-        Self::default()
+        Self {
+            timeout: Duration::from_secs(30),
+            reset_globals: true,
+            globals: Globals::default(),
+            tracing: false,
+            skip_cleanup: false,
+        }
     }
 }
 
@@ -94,11 +101,15 @@ pub struct Globals {
 
 impl Globals {
     /// A new [`Globals`] with no globals specified
+    #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self { list: Vec::new() }
     }
 
     /// A new [`Globals`] with `n` capacity for globals
+    #[inline]
+    #[must_use]
     pub fn with_capacity(n: usize) -> Self {
         Self {
             list: Vec::with_capacity(n),
@@ -106,11 +117,16 @@ impl Globals {
     }
 
     /// How many globals have been added already
+    #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.list.len()
     }
 
     /// Adds a new global `value` with it's name being `key`
+    ///
+    /// # Errors
+    /// If the serializing of the value fails
     pub fn add<T: Serialize, S: Into<String>>(
         &mut self,
         key: S,

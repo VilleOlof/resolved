@@ -109,7 +109,7 @@ impl ItemRef {
     ///
     /// Look at [`store`](Resolve::store) for more info.
     ///
-    /// Errors
+    /// # Errors
     /// If the module executing the code fails or if the script can't be sent
     pub async fn store_option<'c>(
         &'c self,
@@ -206,5 +206,11 @@ impl PartialEq<ItemRef> for ItemRef {
     fn eq(&self, other: &ItemRef) -> bool {
         // we need to check both ids, resolve partialeq already goes direct to id
         self.id() == other.id() && self.resolve() == other.resolve()
+    }
+}
+
+impl std::fmt::Display for ItemRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(itoa::Buffer::new().format(self.value.id))
     }
 }

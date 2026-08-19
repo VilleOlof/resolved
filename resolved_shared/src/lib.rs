@@ -11,30 +11,22 @@ pub use mem::*;
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
 pub enum PrePacket {
-    /// Sent by the module to tell the client that it's server is ready for connections.
-    /// The module returns its own port back to the client
-    Ready = 0,
     /// Sent by module to tell the client that it was unable to reach/get the `Resolve()` object
-    NoResolve = 1,
+    NoResolve = 0,
     /// Sent by the module to tell the client that some error happened while setting up the module
     /// The error formatted as a string is sent back as the response.
-    Error = 2,
-    Ping = 3,
-    Pong = 4,
+    Error = 1,
     /// Sent by the client to the module with the specified configuration
-    Configuration = 5,
+    Configuration = 2,
 }
 
 impl PrePacket {
     #[must_use]
     pub fn from_u8(b: u8) -> Option<Self> {
         Some(match b {
-            0 => Self::Ready,
-            1 => Self::NoResolve,
-            2 => Self::Error,
-            3 => Self::Ping,
-            4 => Self::Pong,
-            5 => Self::Configuration,
+            0 => Self::NoResolve,
+            1 => Self::Error,
+            2 => Self::Configuration,
             _ => return None,
         })
     }

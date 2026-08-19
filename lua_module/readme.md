@@ -18,7 +18,7 @@ it can be built like anything else
 ```sh
 cargo build --release
 # or the following ps1 script from workspace root to also copy into /prebuilt
-./compile_module.ps1
+./scripts/compile_module.ps1
 ```
 
 If you'd rather build this file yourself, see [`building.md`](../build_lib/building.md)

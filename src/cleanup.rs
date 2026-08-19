@@ -15,7 +15,7 @@ use crate::{Error, script_handler::MODULE_NAME};
 /// This will be around every 250 Mb of files
 const CHECK_REQUIREMENT: usize = 512;
 /// Directories to remove must be at least this old
-const DIRECTORY_AGE: Duration = Duration::from_hours(12);
+const DIRECTORY_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 /// A global .lock file in the resolved dir so that only one handler can attempt a cleanup at a time.  
 ///
 /// If another instance tries to cleanup and fails to get the lock it will just not attempt a cleanup and continue
@@ -37,22 +37,23 @@ pub async fn check() -> Result<(), Error> {
     tokio::spawn(async move {
         let lock_file = OpenOptions::new()
             .create(true)
+            .truncate(true)
             .read(true)
             .write(true)
             .open(base.join(LOCK_FILE))
             .expect("failed to open lock file");
 
         match lock_file.try_lock() {
-            Ok(_) => (),
+            Ok(()) => (),
             Err(TryLockError::WouldBlock) => return println!("wouldblock"),
             Err(e) => {
                 eprintln!("failed to see lock: {e:?}");
                 return;
             }
-        };
+        }
 
         // maybe we'd wanna figure out if these fail more
-        let dir_count = base.read_dir().map(|c| c.count()).unwrap_or(0);
+        let dir_count = base.read_dir().map_or(0, std::iter::Iterator::count);
         // we must also have enough old directories
         // but we first do a simple check and then a more time taking check
         if dir_count <= CHECK_REQUIREMENT && !has_enough_old(&base).unwrap_or(false) {
@@ -60,7 +61,7 @@ pub async fn check() -> Result<(), Error> {
         }
 
         if let Err(e) = run_cleanup(base).await {
-            eprintln!("{e:?}")
+            eprintln!("{e:?}");
         }
 
         lock_file.unlock().expect("failed to unlock lock file");
@@ -74,7 +75,7 @@ fn has_enough_old(base: &Path) -> Result<bool, Error> {
     let mut old_dirs = 0;
     for dir in base.read_dir()? {
         let dir = dir?;
-        if is_old(&dir, &now)? {
+        if is_old(&dir, now)? {
             old_dirs += 1;
         }
 
@@ -86,13 +87,9 @@ fn has_enough_old(base: &Path) -> Result<bool, Error> {
     Ok(false)
 }
 
-fn is_old(dir: &DirEntry, now: &SystemTime) -> Result<bool, Error> {
+fn is_old(dir: &DirEntry, now: SystemTime) -> Result<bool, Error> {
     let created = dir.metadata()?.created()?;
-    if now
-        .duration_since(created)
-        .map(|d| d > DIRECTORY_AGE)
-        .unwrap_or(false)
-    {
+    if now.duration_since(created).is_ok_and(|d| d > DIRECTORY_AGE) {
         Ok(true)
     } else {
         Ok(false)
@@ -106,12 +103,12 @@ async fn run_cleanup(base: PathBuf) -> Result<(), Error> {
     for dir in base.read_dir()? {
         let dir = dir?;
 
-        if !is_old(&dir, &now)? {
+        if !is_old(&dir, now)? {
             continue;
         }
 
         // if we can remove the `vinci.dll` file we can delete the entire dir as that file is the only locking one
-        let module_file = dir.path().join(format!("{}.dll", MODULE_NAME));
+        let module_file = dir.path().join(format!("{MODULE_NAME}.dll"));
         match remove_file(&module_file).await {
             // if we didnt find it, we can go ahead and clean it up anyhow
             Err(e) if e.kind() == ErrorKind::NotFound => (),
@@ -119,7 +116,7 @@ async fn run_cleanup(base: PathBuf) -> Result<(), Error> {
                 // dll was locked, so we skip, currently in use probably
                 continue;
             }
-            Ok(_) => (),
+            Ok(()) => (),
         }
 
         remove_dir_all(dir.path()).await?;

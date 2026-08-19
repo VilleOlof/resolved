@@ -155,7 +155,7 @@ all resolve objects are thus also a userdata object, which we for sure cannot se
 
 ## Helpers
 
-To easier compile the module, you can use [`compile_module.ps1`](/compile_module.ps1).  
+To easier compile the module, you can use [`compile_module.ps1`](/scripts/compile_module.ps1).  
 this script runs `build_lib`, which assumes:  
 - you have a default installation pathof DaVinci  
 - have `dumpbin` and `lib` installed from MSVC build tools  
@@ -170,6 +170,6 @@ Which replicates just enough of `fuscript`'s behavior for use to use it as a dum
 
 This binary runs a lua vm just as `fuscript` but without the while Scripting API.  
 This is enough for us to test the networking, references, items, globals, configurations, packets, client lifetime and execute.  
-[`run_tests_with_dummy.ps1`](/run_tests_with_dummy.ps1) makes running these dummy tests really easy.  
+[`run_tests_with_dummy.ps1`](/scripts/run_tests_with_dummy.ps1) makes running these dummy tests really easy.  
 It builds the dummy binary, sets up the paths *(assuming you the default installation path for DaVinci)*  
 and runs the tests, then cleaning up after itself.
