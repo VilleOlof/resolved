@@ -75,19 +75,10 @@ impl PooledResolve {
     }
 
     /// Logic that runs when an instance has been grabbed from the pool
-    pub(crate) async fn while_lock<T: DeserializeOwned>(
+    pub(crate) async fn on_lock<T: DeserializeOwned>(
         script: Script<'_>,
         instance: &Resolve,
     ) -> Result<T, Error> {
-        for arg in &script.args {
-            match arg {
-                ArgData::ArgRef(_) | ArgData::NamedArgRef { key: _, value: _ } => {
-                    return Err(Error::CantHoldReferenceInPool);
-                }
-                _ => (),
-            }
-        }
-
         instance.execute::<T>(script).await
     }
 
@@ -104,6 +95,17 @@ impl PooledResolve {
     where
         T: DeserializeOwned,
     {
+        // we can enforce no-ref in pools before we even acquire a permit since Script doesnt know its destination fn
+        let script = script.into();
+        for arg in &script.args {
+            match arg {
+                ArgData::ArgRef(_) | ArgData::NamedArgRef { key: _, value: _ } => {
+                    return Err(Error::CantHoldReferenceInPool);
+                }
+                _ => (),
+            }
+        }
+
         let permit = self.inner.permits.acquire().await?;
 
         let instance = {
@@ -111,10 +113,9 @@ impl PooledResolve {
             inst.pop().ok_or(Error::OutOfSyncSemaphore)?
         };
 
-        let script = script.into();
         // we dont want to propogate this error until we have
         // returned out instance so its not gone forever in the pool
-        let value_result = Self::while_lock(script, &instance).await;
+        let value_result = Self::on_lock(script, &instance).await;
 
         {
             self.inner.instances.lock().await.push(instance);
