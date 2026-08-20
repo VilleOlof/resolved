@@ -25,7 +25,6 @@ we want to be able to return the values in the script back to Rust so we can use
 Preferebly we also want to be able to store references to to lua-only variables *(userdata objects)*.  
 since we want serialize those we would need to find a workaround for this.  
 
-
 ## Lua module
 
 We only start `fuscript.exe` once since we dont want to deal with it's startup time *(and references)*.  

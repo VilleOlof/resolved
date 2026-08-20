@@ -15,7 +15,7 @@ impl __seal__::Sealed for crate::PooledResolve {}
 ///
 /// - [`Resolve`]
 /// - [`ItemRef`]
-/// - [`PooledResolve`]
+/// - [`PooledResolve`](crate::PooledResolve)
 pub trait ResolveExecute: __seal__::Sealed {
     fn execute<'c, T: DeserializeOwned + Send>(
         &'c self,

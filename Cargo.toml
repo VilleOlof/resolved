@@ -23,15 +23,15 @@ members = [
 resolver = "3"
 
 [workspace.dependencies]
-rmpv = { version = "1.3.1", features = ["with-serde"] }
-serde = { version = "1.0", features = ["derive"] }
-resolved_shared = { path = "./resolved_shared" }
+resolved_shared = { version = "0.1.0", path = "./resolved_shared" }
+rmpv = { version = "1.3", features = ["with-serde"] }
 mlua = { version = "0.12", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
 tracing-subscriber = "0.3.0"
-tracing = "0.1"
 interprocess = "2.4.3"
 rmp-serde = "1.3"
 thiserror = "2"
+tracing = "0.1"
 itoa = "1"
 
 [dependencies]
@@ -49,24 +49,24 @@ tokio = { version = "1.52", features = [
     "time",
     "rt",
 ] }
+resolved_macros = { version = "0.1.0", path = "resolved_macros", optional = true }
 interprocess = { workspace = true, features = ["tokio"] }
 tracing = { workspace = true, optional = true }
 itoa = { workspace = true }
-futures = "0.3"
-fastrand = "2.5"
 parking_lot = "0.12"
-resolved_macros = { version = "0.1.0", path = "resolved_macros", optional = true }
-
-[features]
-default = ["pool", "macros"]
-macros = ["dep:resolved_macros"]
-pool = []
-tracing = ["dep:tracing"]
+fastrand = "2.5"
+futures = "0.3"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { workspace = true }
+
+[features]
+default = ["pool", "macros"]
+macros = ["dep:resolved_macros"]
+tracing = ["dep:tracing"]
+pool = []
 
 [[bench]]
 name = "simple"

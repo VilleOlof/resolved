@@ -30,13 +30,11 @@ pub(crate) const MODULE_NAME: &str = "vinci";
 /// The default path on windows to `fuscript.exe`
 pub(crate) const DEFAULT_FUSCRIPT: &str =
     "C:/Program Files/Blackmagic Design/DaVinci Resolve/fuscript.exe";
-pub(crate) const MODULE_TIMEOUT: Duration = Duration::from_secs(10);
-
-type LuaCode = String;
+pub(crate) const MODULE_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Generates a `.lua` script that sets the cpath to contain the specified `.dll` directory and starts the internal lua module.\
 /// `{path}/?.dll` so the directory that should contain it
-pub(crate) fn dll_script(path: &Path, id: u32) -> LuaCode {
+pub(crate) fn dll_script(path: &Path, id: u32) -> String {
     use itoa::Buffer;
     format!(
         r#"

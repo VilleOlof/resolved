@@ -7,10 +7,6 @@ use crate::script_handler::MODULE_TIMEOUT;
 pub enum Error {
     #[error("Lua module was unable to reach DaVinci Resolve. Are you sure it's open?")]
     UnableToReachDavinciResolve,
-    #[error("Something went wrong when trying to call fuscript, buf: {0:?}")]
-    FuscriptFailed([u8; 8]),
-    #[error("Failed to grab stdout")]
-    NoStdout,
     #[error("Lua module failed: {0:?}")]
     LuaModuleErr(String),
     #[error("permits got out of sync with actual instances")]

@@ -9,8 +9,8 @@ Execute `Lua` code with *DaVinci Resolve Studio's* **Scripting API** in `Rust`
 > See [`Why Windows Only?`](#why-windows-only) further down for details.
 
 > [!NOTE]  
-> This crate only works with *DaVinci Resolve* ***Studio***, aka the paid version.  
-> This will never work in the *free* version.  
+> This crate only works with *DaVinci Resolve* ***Studio***, *(the paid version)*.  
+> This will not work in the *free* version.  
 
 *DaVinci Resolve* exposes a **Scripting API** via `Lua` for us to use so we can interact with it.  
 From `Rust` you can send a piece of `Lua` code to *DaVinci Resolve* and get the resulting value back in `Rust`.

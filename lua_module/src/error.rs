@@ -15,8 +15,6 @@ pub enum RequestError {
     NotEnoughBytesInMemory,
 
     #[error(transparent)]
-    FromUtf8(#[from] std::string::FromUtf8Error),
-    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     RmpEncode(#[from] rmp_serde::encode::Error),
@@ -42,8 +40,6 @@ pub enum ModuleError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Shmem(#[from] resolved_shared::ShmemError),
-    #[error(transparent)]
-    Any(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error(transparent)]
     ShmemData(#[from] resolved_shared::ShmemDataError),
     #[error(transparent)]

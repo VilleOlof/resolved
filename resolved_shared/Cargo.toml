@@ -15,4 +15,4 @@ serde = { workspace = true }
 rmpv = { workspace = true }
 itoa = { workspace = true }
 shared_memory = "0.12.4"
-directories = "6.0.0"
+directories = "6.0"
