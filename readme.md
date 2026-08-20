@@ -1,4 +1,4 @@
-# resolved &emsp; [<img alt="github" src="https://img.shields.io/badge/github-villeolof/resolved-5b969b?style=for-the-badge&labelColor=555555&logo=github" height="24">](https://github.com/VilleOlof/resolved) [<img alt="crates.io" src="https://img.shields.io/crates/v/mca?style=for-the-badge&logo=rust&color=5b7a9b" height="24">](https://crates.io/crates/resolved) [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-resolved-5b659b?style=for-the-badge&labelColor=555555&logo=docs.rs" height="24">](https://docs.rs/resolved)
+# resolved &emsp; [<img alt="github" src="https://img.shields.io/badge/github-villeolof/resolved-5b969b?style=for-the-badge&labelColor=555555&logo=github" height="24">](https://github.com/VilleOlof/resolved) [<img alt="crates.io" src="https://img.shields.io/crates/v/resolved?style=for-the-badge&logo=rust&color=5b7a9b" height="24">](https://crates.io/crates/resolved) [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-resolved-5b659b?style=for-the-badge&labelColor=555555&logo=docs.rs" height="24">](https://docs.rs/resolved)
 
 Execute `Lua` code with *DaVinci Resolve Studio's* **Scripting API** in `Rust`
 
