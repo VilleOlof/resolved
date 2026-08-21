@@ -6,6 +6,12 @@ use quote::{ToTokens, quote};
 
 use crate::token::{Pos, Token, Tokens};
 
+/// All named arguments are prefixed with this string when writing to the module,\
+/// this is so they will never collide with user arguments,\
+/// like if you write `script! { $a + a }`, they clearly look like different variables and should be.\
+/// So `$a` becomes `__rs_a`, so `a` is just `a`
+const GLOBAL_VARIABLE_PREFIX: &str = "__rs_";
+
 #[derive(Debug, Clone)]
 pub(crate) struct Capture(Token);
 
@@ -88,6 +94,10 @@ impl Script {
                     source.push_str(&" ".repeat(col.saturating_sub(prev.column + is_token)));
                 }
             }
+
+            if t.is_capture() || t.is_itemref() {
+                source.push_str(GLOBAL_VARIABLE_PREFIX);
+            }
             source.push_str(&t.to_string());
 
             prev_end = Some(t.end());
@@ -114,11 +124,11 @@ impl Script {
 
         let caps_len = self.captures().len() + self.references().len();
         let caps = self.captures().iter().map(|cap| {
-            let cap_name = cap.name();
+            let cap_name = format!("{GLOBAL_VARIABLE_PREFIX}{}", cap.name());
             quote! { .named_arg(#cap_name, &#cap)? }
         });
         let refs = self.references().iter().map(|item| {
-            let ref_name = item.name();
+            let ref_name = format!("{GLOBAL_VARIABLE_PREFIX}{}", item.name());
             quote! { .named_arg_ref(#ref_name, &#item)? }
         });
 

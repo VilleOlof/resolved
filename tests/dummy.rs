@@ -522,5 +522,21 @@ mod dummy {
 
             Ok(())
         }
+
+        #[tokio::test]
+        async fn same_name_as_capture() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
+
+            let my_var = "zz";
+            let combined: String = resolve
+                .execute(script! {
+                    local my_var = "aa"
+                    return $my_var .. my_var
+                })
+                .await?;
+            assert_eq!("zzaa", combined);
+
+            Ok(())
+        }
     }
 }

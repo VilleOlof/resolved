@@ -66,21 +66,25 @@ impl<'s> ShmemPut<'s> {
         self.cursor
     }
 
+    /// Writes a u8 in be
     pub fn put_u8(&mut self, v: u8) -> Result<(), ShmemDataError> {
         self.put_data(&[v])?;
         Ok(())
     }
 
+    /// Writes a u32 in be
     pub fn put_u32(&mut self, v: u32) -> Result<(), ShmemDataError> {
         self.put_data(&v.to_be_bytes())?;
         Ok(())
     }
 
+    /// Writes a u64 in be
     pub fn put_u64(&mut self, v: u64) -> Result<(), ShmemDataError> {
         self.put_data(&v.to_be_bytes())?;
         Ok(())
     }
 
+    /// Writes a length-prefixed string
     pub fn put_string(&mut self, s: &str) -> Result<(), Error> {
         self.put_u32(u32::try_from(s.len())?)?;
         self.put_data(s.as_bytes())?;
