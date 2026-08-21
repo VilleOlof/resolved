@@ -1,10 +1,10 @@
 [package]
 name = "resolved_shared"
 description = "Shared types between 'resolved' and it's internal lua module"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
-readme = "../README.md"
+readme = "README.md"
 homepage = "https://github.com/VilleOlof/resolved"
 repository = "https://github.com/VilleOlof/resolved"
 authors = ["VilleOlof"]
@@ -16,3 +16,7 @@ rmpv = { workspace = true }
 itoa = { workspace = true }
 shared_memory = "0.12.4"
 directories = "6.0"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []

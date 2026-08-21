@@ -1,10 +1,10 @@
 [package]
 name = "resolved_macros"
 description = "script! macro for 'resolved'"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
-readme = "../README.md"
+readme = "README.md"
 homepage = "https://github.com/VilleOlof/resolved"
 repository = "https://github.com/VilleOlof/resolved"
 authors = ["VilleOlof"]
@@ -16,3 +16,7 @@ quote = "1"
 
 [lib]
 proc-macro = true
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []

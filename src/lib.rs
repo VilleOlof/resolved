@@ -1,4 +1,4 @@
-#![doc = include_str!("../readme.md")]
+#![doc = include_str!("../README.md")]
 
 #[cfg(not(windows))]
 compile_error!("resolved only supports windows. see #why-windows-only in readme");

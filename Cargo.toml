@@ -1,7 +1,7 @@
 [package]
 name = "resolved"
 description = "Use DaVinci Resolve's Scripting API in Rust with Lua"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
@@ -76,3 +76,7 @@ harness = false
 inherits = "release"
 lto = true
 codegen-units = 1
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = []
