@@ -40,7 +40,7 @@ use resolved::prelude::*;
 #[tokio::main]
 async fn main() -> ResolveResult<()> {
     let resolve = Resolve::new().await?;
-    let version: String = resolve.execute("return self:GetVersionString()").await?;
+    let version: String = resolve.execute(script! { self:GetVersionString() }).await?;
     Ok(())
 }
 ```
@@ -514,3 +514,10 @@ The crate gives some more safety so that both of the processes won't ever access
 This is with help of events through named pipes and the first byte in the shared memory-  
 being who currently owns access to it.  
 Is this ever mismatched, the current process won't attempt to access any of it and fail.
+
+## Security
+
+This crate contains prebuilt `.dll` files which have only ever been compiled by the author.  
+To use these you must trust that I, the author haven't messed with them.  
+
+If you do not have this trust, see [`lua_module/readme`](./lua_module/readme.md) for compiling these yourself.
