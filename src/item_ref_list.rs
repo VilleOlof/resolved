@@ -76,7 +76,7 @@ impl ItemRefList {
     /// ## Example
     ///
     /// How you would iterate over all references.\
-    /// *Note that you must borrow the list. For consuming the references, see: [`take_list`](ItemRefList::take_list)*
+    /// *Note that you must borrow the list. For consuming the references, see: [`to_vec`](ItemRefList::to_vec)*
     ///
     /// ```ignore
     /// let markers = timeline.store_list("self:GetMarkers()").await?;
