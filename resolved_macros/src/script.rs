@@ -125,15 +125,17 @@ impl Script {
         let caps_len = self.captures().len() + self.references().len();
         let caps = self.captures().iter().map(|cap| {
             let cap_name = format!("{GLOBAL_VARIABLE_PREFIX}{}", cap.name());
-            quote! { .named_arg(#cap_name, &#cap)? }
+            quote! { .and_then(|x| x.named_arg(#cap_name, &#cap)) }
         });
         let refs = self.references().iter().map(|item| {
             let ref_name = format!("{GLOBAL_VARIABLE_PREFIX}{}", item.name());
-            quote! { .named_arg_ref(#ref_name, &#item)? }
+            quote! { .and_then(|x| x.named_arg_ref(#ref_name, &#item)) }
         });
 
         quote! {{
-            resolved::Script::new_with_capacity(#source, #caps_len)
+            std::result::Result
+                ::<resolved::Script<'_>, resolved::Error>::
+                Ok(resolved::Script::new_with_capacity(#source, #caps_len))
 
             #( #caps )*
             #( #refs )*

@@ -147,7 +147,7 @@ impl<T> ScriptResponse<T> {
     }
 }
 
-/// Configuration sent from the client to the module, contains a subset* of [`ResolveConfig`] and extra information
+/// Configuration sent from the client to the module, contains a subset* of `ResolveConfig` and extra information
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleConfig {
     pub reset_globals: bool,

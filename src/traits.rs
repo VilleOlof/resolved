@@ -28,7 +28,7 @@ pub trait ResolveExecute: __seal__::Sealed {
 /// - [`Resolve`]
 /// - [`ItemRef`]
 ///
-/// Note that [`PooledResolve`] can't be used to store and use references in,
+/// Note that [`PooledResolve`](crate::PooledResolve) can't be used to store and use references in,
 /// if you could, it would need to sync all references across all lua modules in every instance,
 /// this is unfeasable and would require too much syncing and extra house keeping to keep track of right.
 pub trait ResolveStore: __seal__::Sealed {

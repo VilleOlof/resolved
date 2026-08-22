@@ -40,7 +40,7 @@ use resolved::prelude::*;
 #[tokio::main]
 async fn main() -> ResolveResult<()> {
     let resolve = Resolve::new().await?;
-    let version: String = resolve.execute(script! { self:GetVersionString() }).await?;
+    let version: String = resolve.execute(script! { self:GetVersionString() }?).await?;
     Ok(())
 }
 ```
@@ -316,14 +316,14 @@ async fn main() -> ResolveResult<()> {
     let (a, b) = (5, 3);
     let result: i32 = resolve.execute(script! {
         return $a + $b
-    }).await?;
+    }?).await?;
     assert_eq!(8, result);
 
-    let media = resolve.store(script! { self:GetMediaStorage() }).await?;
+    let media = resolve.store(script! { self:GetMediaStorage() }?).await?;
     // Reference ItemRef's with: `@`
     let result: Vec<String> = resolve.execute(script! {
         return @media:GetFileList("/")
-    }).await?;
+    }?).await?;
 
     Ok(())
 }

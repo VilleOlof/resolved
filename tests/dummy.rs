@@ -469,7 +469,7 @@ mod dummy {
         async fn macro_simple() -> Result<(), Error> {
             let resolve = Resolve::new().await?;
 
-            let five = resolve.execute::<i32>(script! { 5 }).await?;
+            let five = resolve.execute::<i32>(script! { 5 }?).await?;
             assert_eq!(5, five);
 
             let multiline = resolve
@@ -478,7 +478,7 @@ mod dummy {
                     local b = 2
                     local c = a * b
                     return c
-                })
+                }?)
                 .await?;
             assert_eq!(10, multiline);
 
@@ -490,16 +490,18 @@ mod dummy {
             let resolve = Resolve::new().await?;
 
             let num = 67.69;
-            let same: f64 = resolve.execute(script! { $num }).await?;
+            let same: f64 = resolve.execute(script! { $num }?).await?;
             assert_eq!(num, same);
 
             let a = "Hello";
             let b = ", World!";
-            let classic: String = resolve.execute(script! { $a .. $b }).await?;
+            let classic: String = resolve.execute(script! { $a .. $b }?).await?;
             assert_eq!("Hello, World!", classic);
 
             let text = "|";
-            let many: String = resolve.execute(script! { $text .. $text .. $text }).await?;
+            let many: String = resolve
+                .execute(script! { $text .. $text .. $text }?)
+                .await?;
             assert_eq!("|||", many);
 
             Ok(())
@@ -509,15 +511,15 @@ mod dummy {
         async fn macro_reference_variables() -> Result<(), Error> {
             let resolve = Resolve::new().await?;
 
-            let items = resolve.store(script! { { 1, 2, 3, 4, 5 } }).await?;
+            let items = resolve.store(script! { { 1, 2, 3, 4, 5 } }?).await?;
 
-            let first: i32 = resolve.execute(script! { @items[1] }).await?;
-            let last: i32 = resolve.execute(script! { @items[#@items] }).await?;
+            let first: i32 = resolve.execute(script! { @items[1] }?).await?;
+            let last: i32 = resolve.execute(script! { @items[#@items] }?).await?;
 
             assert_eq!(1, first);
             assert_eq!(5, last);
 
-            let both: bool = resolve.execute(script! { $first == @items[1] }).await?;
+            let both: bool = resolve.execute(script! { $first == @items[1] }?).await?;
             assert!(both);
 
             Ok(())
@@ -532,7 +534,7 @@ mod dummy {
                 .execute(script! {
                     local my_var = "aa"
                     return $my_var .. my_var
-                })
+                }?)
                 .await?;
             assert_eq!("zzaa", combined);
 

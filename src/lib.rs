@@ -54,17 +54,22 @@ pub mod prelude {
 /// let resolve = Resolve::new().await?;
 ///
 /// // Write lua directly
-/// let version: String = resolve.execute(script! { return self:GetVersionString() }).await?;
+/// let version: String = resolve.execute(script! { return self:GetVersionString() }?).await?;
 ///
 /// // Reference rust variables with '$'
 /// let (a, b) = (52, 91);
-/// let result: i32 = resolve.execute(script! { return $a * $b }).await?;
+/// let result: i32 = resolve.execute(script! { return $a * $b }?).await?;
 /// assert_eq!(4732, result);
 ///
 /// // Reference other lua values (ItemRef) with '@'
-/// let page = resolve.store(script! { return self:GetCurrentPage() }).await?;
-/// resolve.execute(script! { self:OpenPage(@page) }).await?;
+/// let page = resolve.store(script! { return self:GetCurrentPage() }?).await?;
+/// resolve.execute(script! { self:OpenPage(@page) }?).await?;
 /// ```
+///
+/// # Errors
+///
+/// This macro always returns a `Result<Script<'c>, Error>` which must be handled.\
+/// The macro can fail if the provided value for an argument fails to serialize.
 ///
 /// ## Syntax Issues
 ///
