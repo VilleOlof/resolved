@@ -268,11 +268,8 @@ mod __seal__ {
 }
 
 impl __seal__::Sealed for ItemRef {}
-impl __seal__::Sealed for &ItemRef {}
-impl __seal__::Sealed for &&ItemRef {}
 impl __seal__::Sealed for ItemRefList {}
-impl __seal__::Sealed for &ItemRefList {}
-impl __seal__::Sealed for &&ItemRefList {}
+impl<T: ToLuaRef> __seal__::Sealed for &T {}
 
 /// References which can be referenced by a single reference
 pub trait ToLuaRef: __seal__::Sealed {
@@ -284,30 +281,15 @@ impl ToLuaRef for ItemRef {
         self.clone()
     }
 }
-impl ToLuaRef for &ItemRef {
-    fn to_ref(&self) -> ItemRef {
-        (*self).clone()
-    }
-}
-impl ToLuaRef for &&ItemRef {
-    fn to_ref(&self) -> ItemRef {
-        (**self).clone()
-    }
-}
-
 impl ToLuaRef for ItemRefList {
     fn to_ref(&self) -> ItemRef {
         self.read().source.clone()
     }
 }
-impl ToLuaRef for &ItemRefList {
+
+impl<T: ToLuaRef> ToLuaRef for &T {
     fn to_ref(&self) -> ItemRef {
-        self.read().source.clone()
-    }
-}
-impl ToLuaRef for &&ItemRefList {
-    fn to_ref(&self) -> ItemRef {
-        self.read().source.clone()
+        (*self).to_ref()
     }
 }
 

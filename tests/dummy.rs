@@ -463,6 +463,8 @@ mod dummy {
 
     #[cfg(feature = "macros")]
     mod macros {
+        use resolved::ToLuaRef;
+
         use super::*;
 
         #[tokio::test]
@@ -558,6 +560,20 @@ mod dummy {
                 }?)
                 .await?;
             assert_eq!(4, len);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn to_lua_ref_fn() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
+
+            async fn add_one(resolve: &Resolve, value: impl ToLuaRef) -> Result<i32, Error> {
+                resolve.execute(script! { @value + 1 }?).await
+            }
+
+            let six = resolve.store(script! { 6 }?).await?;
+            assert_eq!(7, add_one(&resolve, six).await?);
 
             Ok(())
         }
