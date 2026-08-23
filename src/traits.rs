@@ -2,14 +2,20 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, ItemRef, ItemRefList, Resolve, Script};
 
-mod __seal__ {
-    pub trait Sealed {}
-}
+pub(crate) mod __seal__ {
+    use crate::{ItemRef, ItemRefList, Resolve, ToLuaRef};
 
-impl __seal__::Sealed for Resolve {}
-impl __seal__::Sealed for ItemRef {}
-#[cfg(feature = "pool")]
-impl __seal__::Sealed for crate::PooledResolve {}
+    pub trait Sealed {}
+
+    impl Sealed for Resolve {}
+
+    impl Sealed for ItemRef {}
+    impl Sealed for ItemRefList {}
+    impl<T: ToLuaRef> Sealed for &T {}
+
+    #[cfg(feature = "pool")]
+    impl Sealed for crate::PooledResolve {}
+}
 
 /// All types that you can call `.execute` on and run some lua code which returns the value.
 ///

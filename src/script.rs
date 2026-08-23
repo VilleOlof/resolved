@@ -174,7 +174,7 @@ impl<'c> Script<'c> {
         Ok(self)
     }
 
-    /// Pushes an [`ItemRef`] to the global `arg` variable.
+    /// Pushes an [`ItemRef`] or [`ItemRefList`] to the global `arg` variable.
     ///
     /// # Errors
     /// Even tho this returns an error, this actually can't error\
@@ -200,7 +200,7 @@ impl<'c> Script<'c> {
         Ok(self)
     }
 
-    /// Sets the global variable of `key` to an [`ItemRef`]
+    /// Sets the global variable of `key` to an [`ItemRef`] or [`ItemRefList`]
     ///
     /// # Errors
     /// Even tho this returns an error, this actually can't error\
@@ -263,16 +263,8 @@ impl std::fmt::Display for OwnedScript {
     }
 }
 
-mod __seal__ {
-    pub trait Sealed {}
-}
-
-impl __seal__::Sealed for ItemRef {}
-impl __seal__::Sealed for ItemRefList {}
-impl<T: ToLuaRef> __seal__::Sealed for &T {}
-
 /// References which can be referenced by a single reference
-pub trait ToLuaRef: __seal__::Sealed {
+pub trait ToLuaRef: crate::traits::__seal__::Sealed {
     fn to_ref(&self) -> ItemRef;
 }
 
