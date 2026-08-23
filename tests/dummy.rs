@@ -504,6 +504,10 @@ mod dummy {
                 .await?;
             assert_eq!("|||", many);
 
+            let (a, b, c) = (1, 2, 3);
+            let mixed: i32 = resolve.execute(script! { $a + $a + $c * $b / $a }?).await?;
+            assert_eq!(8, mixed);
+
             Ok(())
         }
 
@@ -537,6 +541,23 @@ mod dummy {
                 }?)
                 .await?;
             assert_eq!("zzaa", combined);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn ref_list_as_argument() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
+
+            let list = [1, 2, 3, 4];
+            let list = resolve.store_list(script! { $list }?).await?;
+
+            let len: i32 = resolve
+                .execute(script! {
+                    return #@list
+                }?)
+                .await?;
+            assert_eq!(4, len);
 
             Ok(())
         }

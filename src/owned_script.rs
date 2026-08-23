@@ -144,12 +144,15 @@ impl OwnedArgData {
     fn as_ref(&self) -> ArgData<'_> {
         match self {
             Self::Arg(v) => ArgData::Arg(Cow::Borrowed(v)),
-            Self::ArgRef(v) => ArgData::ArgRef(v),
+            Self::ArgRef(v) => ArgData::ArgRef(v.clone()),
             Self::NamedArg { key, value } => ArgData::NamedArg {
                 key,
                 value: Cow::Borrowed(value),
             },
-            Self::NamedArgRef { key, value } => ArgData::NamedArgRef { key, value },
+            Self::NamedArgRef { key, value } => ArgData::NamedArgRef {
+                key,
+                value: value.clone(),
+            },
         }
     }
 }

@@ -6,11 +6,10 @@ use quote::{ToTokens, quote};
 
 use crate::token::{Pos, Token, Tokens};
 
-/// All named arguments are prefixed with this string when writing to the module,\
-/// this is so they will never collide with user arguments,\
-/// like if you write `script! { $a + a }`, they clearly look like different variables and should be.\
-/// So `$a` becomes `__rs_a`, so `a` is just `a`
-const GLOBAL_VARIABLE_PREFIX: &str = "__rs_";
+/// > `__c0`, `__c1` etc
+const CAP_PREFIX: &str = "__c";
+/// > `__r0`, `__r1` etc
+const REF_PREFIX: &str = "__r";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Capture(Token);
@@ -26,10 +25,6 @@ impl Deref for Capture {
 impl Capture {
     fn new(token: &Token) -> Self {
         Self(token.clone())
-    }
-
-    pub(crate) fn name(&self) -> String {
-        self.0.to_string()
     }
 }
 
@@ -75,6 +70,11 @@ impl Script {
         let mut captures = Captures::new();
         let mut references = Captures::new();
 
+        let mut curr_cap = 0;
+        let mut curr_ref = 0;
+        let mut cap_map = std::collections::HashMap::new();
+        let mut ref_map = std::collections::HashMap::new();
+
         let mut prev_end: Option<Pos> = None;
         for t in tokens.0 {
             let mut is_token = 0;
@@ -95,10 +95,39 @@ impl Script {
                 }
             }
 
-            if t.is_capture() || t.is_itemref() {
-                source.push_str(GLOBAL_VARIABLE_PREFIX);
+            if t.is_capture() {
+                source.push_str(CAP_PREFIX);
+
+                let t_name = t.to_string();
+                // if the same var is referenced multiple times we need to track which id it had
+                // and only increment if we encounter a totally actual new variable
+                match cap_map.get(&t_name) {
+                    None => {
+                        source.push_str(&curr_cap.to_string());
+                        cap_map.insert(t.to_string(), curr_cap.to_string());
+                        curr_cap += 1;
+                    }
+                    Some(count) => {
+                        source.push_str(&count);
+                    }
+                }
+            } else if t.is_itemref() {
+                source.push_str(REF_PREFIX);
+
+                let t_name = t.to_string();
+                match ref_map.get(&t_name) {
+                    None => {
+                        source.push_str(&curr_ref.to_string());
+                        ref_map.insert(t.to_string(), curr_ref.to_string());
+                        curr_ref += 1;
+                    }
+                    Some(count) => {
+                        source.push_str(&count);
+                    }
+                }
+            } else {
+                source.push_str(&t.to_string());
             }
-            source.push_str(&t.to_string());
 
             prev_end = Some(t.end());
         }
@@ -122,13 +151,18 @@ impl Script {
     pub(crate) fn expand(&self) -> TokenStream2 {
         let source = &self.source;
 
+        let mut curr_cap = 0;
+        let mut curr_ref = 0;
+
         let caps_len = self.captures().len() + self.references().len();
         let caps = self.captures().iter().map(|cap| {
-            let cap_name = format!("{GLOBAL_VARIABLE_PREFIX}{}", cap.name());
+            let cap_name = format!("{CAP_PREFIX}{curr_cap}");
+            curr_cap += 1;
             quote! { .and_then(|x| x.named_arg(#cap_name, &#cap)) }
         });
         let refs = self.references().iter().map(|item| {
-            let ref_name = format!("{GLOBAL_VARIABLE_PREFIX}{}", item.name());
+            let ref_name = format!("{REF_PREFIX}{curr_ref}");
+            curr_ref += 1;
             quote! { .and_then(|x| x.named_arg_ref(#ref_name, &#item)) }
         });
 

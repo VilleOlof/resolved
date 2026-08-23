@@ -3,7 +3,7 @@ use std::{borrow::Cow, time::Duration};
 use resolved_shared::ArgType;
 use serde::Serialize;
 
-use crate::{Error, ItemRef, owned_script::OwnedScript};
+use crate::{Error, ItemRef, ItemRefList, owned_script::OwnedScript};
 
 /// A piece of lua code with optional arguments.
 ///
@@ -72,9 +72,9 @@ pub struct Script<'c> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum ArgData<'s> {
     Arg(Cow<'s, [u8]>),
-    ArgRef(&'s ItemRef),
+    ArgRef(ItemRef),
     NamedArg { key: &'s str, value: Cow<'s, [u8]> },
-    NamedArgRef { key: &'s str, value: &'s ItemRef },
+    NamedArgRef { key: &'s str, value: ItemRef },
 }
 
 impl ArgData<'_> {
@@ -180,8 +180,8 @@ impl<'c> Script<'c> {
     /// Even tho this returns an error, this actually can't error\
     /// *(this is for a standard arg API and for the macros to work easier)*
     #[inline]
-    pub fn arg_ref(mut self, item_ref: &'c ItemRef) -> Result<Self, Error> {
-        let arg = ArgData::ArgRef(item_ref);
+    pub fn arg_ref(mut self, item_ref: impl ToLuaRef) -> Result<Self, Error> {
+        let arg = ArgData::ArgRef(item_ref.to_ref());
         self.args.push(arg);
         Ok(self)
     }
@@ -206,10 +206,10 @@ impl<'c> Script<'c> {
     /// Even tho this returns an error, this actually can't error\
     /// *(this is for a standard arg API and for the macros to work easier)*
     #[inline]
-    pub fn named_arg_ref(mut self, key: &'c str, item_ref: &'c ItemRef) -> Result<Self, Error> {
+    pub fn named_arg_ref(mut self, key: &'c str, item_ref: impl ToLuaRef) -> Result<Self, Error> {
         let arg = ArgData::NamedArgRef {
             key,
-            value: item_ref,
+            value: item_ref.to_ref(),
         };
         self.args.push(arg);
         Ok(self)
@@ -260,6 +260,42 @@ impl std::fmt::Display for Script<'_> {
 impl std::fmt::Display for OwnedScript {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.lua)
+    }
+}
+
+mod __seal__ {
+    pub trait Sealed {}
+}
+
+impl __seal__::Sealed for ItemRef {}
+impl __seal__::Sealed for &ItemRef {}
+impl __seal__::Sealed for ItemRefList {}
+impl __seal__::Sealed for &ItemRefList {}
+
+/// References which can be referenced by a single reference
+pub trait ToLuaRef: __seal__::Sealed {
+    fn to_ref(&self) -> ItemRef;
+}
+
+impl ToLuaRef for ItemRef {
+    fn to_ref(&self) -> ItemRef {
+        self.clone()
+    }
+}
+impl ToLuaRef for &ItemRef {
+    fn to_ref(&self) -> ItemRef {
+        (*self).clone()
+    }
+}
+
+impl ToLuaRef for ItemRefList {
+    fn to_ref(&self) -> ItemRef {
+        self.read().source.clone()
+    }
+}
+impl ToLuaRef for &ItemRefList {
+    fn to_ref(&self) -> ItemRef {
+        self.read().source.clone()
     }
 }
 
