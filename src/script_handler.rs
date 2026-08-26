@@ -73,7 +73,9 @@ pub(crate) async fn spawn_script_server(
 
     #[cfg(not(debug_assertions))]
     {
-        cmd.stdout(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        cmd.stdin(std::process::Stdio::null());
     }
 
     match cmd.spawn() {
