@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `fuscript`'s `stdout`, `stderr` and `stdin` are properly handled and null'd now
+- `fuscript`'s `stdout`, `stderr` and `stdin` are properly handled and null'd now.  
+- spawning of `fuscript` now never creates a new window regardless of it's process context.  
 
 ## [0.2.0] - 2026-08-26
 

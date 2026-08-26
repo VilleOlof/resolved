@@ -71,6 +71,14 @@ pub(crate) async fn spawn_script_server(
     let mut cmd = Command::new(fuscript);
     cmd.arg("-q").args([script_path]);
 
+    // this is only ever on windows soooo kinda useless but i like the explicit
+    #[cfg(windows)]
+    {
+        // https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     #[cfg(not(debug_assertions))]
     {
         cmd.stdout(std::process::Stdio::null());
