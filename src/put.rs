@@ -105,6 +105,8 @@ impl<'s> ShmemPut<'s> {
             self.put_u64(item.id())?;
         }
 
+        self.put_u8(script.discard as u8)?;
+
         self.put_string(&script.lua)?;
         self.put_u32(u32::try_from(script.args.len())?)?;
 

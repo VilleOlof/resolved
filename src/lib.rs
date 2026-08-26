@@ -26,7 +26,7 @@ pub use error::Error;
 pub use item_ref::ItemRef;
 pub use item_ref_list::{ItemRefList, RefList};
 pub use owned_script::OwnedScript;
-pub use resolve::Resolve;
+pub use resolve::{Resolve, Void};
 pub use script::{Script, ToLuaRef};
 pub use traits::{ResolveExecute, ResolveStore};
 

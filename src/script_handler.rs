@@ -138,6 +138,16 @@ pub(crate) async fn write_config(pipe: &mut Pipe, config: &ResolveConfig) -> Res
         }
     }
 
+    // is_resolve_available function_check
+    {
+        pipe.write_u8(config.is_resolve_available.is_some() as u8)
+            .await?;
+        if let Some(s) = &config.is_resolve_available {
+            pipe.write_u32(u32::try_from(s.len())?).await?;
+            pipe.write_all(s.as_bytes()).await?;
+        }
+    }
+
     pipe.flush().await?;
 
     #[cfg(feature = "tracing")]

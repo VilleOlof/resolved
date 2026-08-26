@@ -13,6 +13,8 @@ pub enum RequestError {
     NotATable(&'static str),
     #[error("Not enough enogh bytes in shared memory len")]
     NotEnoughBytesInMemory,
+    #[error("unreachable message")]
+    UnableToReachResolve,
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

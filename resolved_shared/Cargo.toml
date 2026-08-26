@@ -1,7 +1,7 @@
 [package]
 name = "resolved_shared"
 description = "Shared types between 'resolved' and it's internal lua module"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"

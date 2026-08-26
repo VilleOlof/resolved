@@ -86,7 +86,7 @@ impl ItemRef {
     /// If the module executing the code fails or if the script can't be sent
     pub async fn execute<'c, T>(&'c self, script: impl Into<Script<'c>>) -> Result<T, Error>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + 'static,
     {
         self.resolve().execute_with(self, script).await
     }

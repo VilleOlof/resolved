@@ -42,4 +42,20 @@ mod resolve {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn close_mid() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let script = Script::new(r#"return resolve:GetVersionString()"#).as_owned();
+
+        resolve.execute::<String>(&script).await?;
+
+        println!("waiting 10s...");
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        resolve.execute::<String>(&script).await?;
+
+        Ok(())
+    }
 }

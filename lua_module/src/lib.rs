@@ -144,6 +144,7 @@ fn _start(
             &mut item_ref_handler,
             &resolve,
             &mut buffers,
+            config.function_check.as_ref(),
         ) {
             Err(e) => serialize_err(e.to_string()).expect("Failed to serialize err string"),
             Ok(buf) => buf,

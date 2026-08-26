@@ -23,9 +23,20 @@ pub struct ResolveConfig {
     ///
     /// This skips this cleanup and never runs it when creating this instance
     pub skip_cleanup: bool,
+    /// Specifies a root Scripting API function to check if it exists during each execution request.\
+    /// If this specifed function does *not* exist, the module will assume that `DaVinci Resolve` is unreachable.\
+    /// This makes the functions return a proper [`Error::UnableToReachDavinciResolve`](crate::Error::UnableToReachDavinciResolve) error if so.
+    ///
+    /// This is not enabled by default as it's a bit slow for simple calls, but a good default to use is: [`DEFAULT_RESOLVE_AVAILABLE_FUNCTION`](ResolveConfig::DEFAULT_RESOLVE_AVAILABLE_FUNCTION).
+    ///
+    /// Roughly, this adds one extra internal call to verify
+    pub is_resolve_available: Option<String>,
 }
 
 impl ResolveConfig {
+    /// A function that i'm sure is to exist in all and previous versions of the Scripting API.
+    pub const DEFAULT_RESOLVE_AVAILABLE_FUNCTION: &str = "Quit";
+
     /// Default configuration except that globals don't get reset
     #[inline]
     #[must_use]
@@ -36,6 +47,7 @@ impl ResolveConfig {
             globals: Globals::default(),
             tracing: false,
             skip_cleanup: false,
+            is_resolve_available: None,
         }
     }
 }
@@ -77,6 +89,13 @@ impl ResolveConfig {
         self.skip_cleanup = skip_cleanup;
         self
     }
+    /// Set's `is_resolve_available` to the specified value.
+    #[inline]
+    #[must_use]
+    pub fn is_resolve_available(mut self, is_resolve_available: Option<String>) -> Self {
+        self.is_resolve_available = is_resolve_available;
+        self
+    }
 }
 
 impl Default for ResolveConfig {
@@ -87,6 +106,7 @@ impl Default for ResolveConfig {
             globals: Globals::default(),
             tracing: false,
             skip_cleanup: false,
+            is_resolve_available: None,
         }
     }
 }

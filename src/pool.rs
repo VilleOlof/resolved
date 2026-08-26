@@ -75,7 +75,7 @@ impl PooledResolve {
     }
 
     /// Logic that runs when an instance has been grabbed from the pool
-    pub(crate) async fn on_lock<T: DeserializeOwned>(
+    pub(crate) async fn on_lock<T: DeserializeOwned + 'static>(
         script: Script<'_>,
         instance: &Resolve,
     ) -> Result<T, Error> {
@@ -93,7 +93,7 @@ impl PooledResolve {
     /// If it fails to acquire a permit to an instance, or if instance [`execute`](Resolve::execute) fails
     pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + 'static,
     {
         // we can enforce no-ref in pools before we even acquire a permit since Script doesnt know its destination fn
         let script = script.into();

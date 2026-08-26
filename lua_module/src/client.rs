@@ -37,6 +37,12 @@ impl Client {
         Ok(u32::from_be_bytes(buf))
     }
 
+    fn read_u8(&mut self) -> std::io::Result<u8> {
+        let mut buf = [0u8; size_of::<u8>()];
+        self.0.read_exact(&mut buf)?;
+        Ok(u8::from_be_bytes(buf))
+    }
+
     fn read_string(&mut self, len: u32) -> std::io::Result<String> {
         let buf = self.read_buf(len)?;
         Ok(String::from_utf8(buf).expect("string had invalid utf8"))
@@ -81,9 +87,21 @@ impl Client {
             globals
         };
 
+        let function_check = {
+            let is_some = self.read_u8()? == 1;
+            if is_some {
+                let f_len = self.read_u32()?;
+                let f = self.read_string(f_len)?;
+                Some(f)
+            } else {
+                None
+            }
+        };
+
         Ok(ModuleConfig {
             reset_globals,
             globals,
+            function_check,
         })
     }
 }

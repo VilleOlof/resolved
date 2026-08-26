@@ -4,8 +4,12 @@ use mlua::prelude::*;
 use resolved_shared::MsgPacket;
 
 use crate::{
-    Buffers, RESOLVE_FLAGS, error::RequestError, item_ref::ItemRefHandler, reader::ShmemReader,
-    request::serialize_values, table_keys,
+    Buffers, RESOLVE_FLAGS,
+    error::RequestError,
+    item_ref::ItemRefHandler,
+    reader::ShmemReader,
+    request::{serialize_noresolve, serialize_values},
+    table_keys,
 };
 
 /// Handles a specific request
@@ -15,6 +19,7 @@ pub fn handle_req(
     item_ref_handler: &mut ItemRefHandler,
     resolve: &LuaAnyUserData,
     buffers: &mut Buffers,
+    function_check: Option<&String>,
 ) -> Result<Vec<u8>, RequestError> {
     let packet_type = reader.get_packet()?;
     crate::info!(?packet_type, "request handler");
@@ -22,12 +27,23 @@ pub fn handle_req(
     return match packet_type {
         MsgPacket::Execute => {
             let (value, eval_time) =
-                reader.handle_script(lua, item_ref_handler, resolve, buffers)?;
+                match reader.handle_script(lua, item_ref_handler, resolve, buffers, function_check)
+                {
+                    Ok(v) => v,
+                    Err(RequestError::UnableToReachResolve) => return Ok(serialize_noresolve()?),
+                    Err(e) => return Err(e),
+                };
+
             Ok(serialize_values(value, eval_time)?)
         }
         MsgPacket::Store => {
             let (value, eval_time) =
-                reader.handle_script(lua, item_ref_handler, resolve, buffers)?;
+                match reader.handle_script(lua, item_ref_handler, resolve, buffers, function_check)
+                {
+                    Ok(v) => v,
+                    Err(RequestError::UnableToReachResolve) => return Ok(serialize_noresolve()?),
+                    Err(e) => return Err(e),
+                };
             if value.is_nil() {
                 return Ok(serialize_values(None::<u64>, eval_time)?);
             }
@@ -46,7 +62,12 @@ pub fn handle_req(
         }
         MsgPacket::StoreTable => {
             let (value, eval_time) =
-                reader.handle_script(lua, item_ref_handler, resolve, buffers)?;
+                match reader.handle_script(lua, item_ref_handler, resolve, buffers, function_check)
+                {
+                    Ok(v) => v,
+                    Err(RequestError::UnableToReachResolve) => return Ok(serialize_noresolve()?),
+                    Err(e) => return Err(e),
+                };
 
             let table = value
                 .as_table()

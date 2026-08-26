@@ -11,6 +11,7 @@ pub struct OwnedScript {
     pub(crate) args: Vec<OwnedArgData>,
     pub(crate) with: Option<ItemRef>,
     pub(crate) timeout: Option<Duration>,
+    pub(crate) discard: bool,
 }
 
 /// An `Owned` variant of [`Arg`]
@@ -31,6 +32,7 @@ impl OwnedScript {
             with: None,
             args: Vec::new(),
             timeout: None,
+            discard: bool::default(),
         }
     }
 
@@ -166,6 +168,7 @@ impl Script<'_> {
             args: self.args.iter().map(ArgData::as_owned).collect(),
             with: self.with.cloned(),
             timeout: self.timeout,
+            discard: self.discard,
         }
     }
 }
@@ -179,6 +182,7 @@ impl OwnedScript {
             args: self.args.iter().map(|x| x.as_ref()).collect(),
             with: self.with.as_ref(),
             timeout: self.timeout,
+            discard: self.discard,
         }
     }
 }

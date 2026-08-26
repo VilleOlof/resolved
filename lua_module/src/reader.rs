@@ -4,7 +4,7 @@ use mlua::prelude::*;
 use resolved_shared::{ArgType, DATA_OFFSET, MsgPacket, ShmemData, TYPE_OFFSET};
 
 use crate::{
-    Buffers, GLOBAL_ARG, GLOBAL_SELF, ShmemModule, error::RequestError, execute,
+    Buffers, GLOBAL_ARG, GLOBAL_RESOLVE, GLOBAL_SELF, ShmemModule, error::RequestError, execute,
     item_ref::ItemRefHandler,
 };
 
@@ -100,12 +100,15 @@ impl<'s> ShmemReader<'s> {
         item_ref_handler: &mut ItemRefHandler,
         resolve: &LuaAnyUserData,
         buffers: &mut Buffers,
+        function_check: Option<&String>,
     ) -> Result<(LuaValue, Duration), RequestError> {
         let is_ref = self.u8()? == 1;
         let ref_id = if is_ref { Some(self.u64()?) } else { None };
         crate::debug!(?is_ref, ?ref_id, "script with");
 
         let globals = lua.globals();
+
+        let discard_value = self.u8()? == 1;
 
         let lua_code = self.string()?;
         let args_len = self.u32()?;
@@ -177,7 +180,13 @@ impl<'s> ShmemReader<'s> {
             None => globals.set(GLOBAL_SELF, resolve)?,
         }
 
-        let return_value = execute(lua, lua_code)?;
+        if let Some(function) = function_check {
+            if !is_resolve_reachable(&globals, function)? {
+                return Err(RequestError::UnableToReachResolve);
+            }
+        }
+
+        let mut return_value = execute(lua, lua_code)?;
         #[cfg(feature = "tracing")]
         let (type_name, value, time) =
             (return_value.0.type_name(), &return_value.0, return_value.1);
@@ -191,6 +200,10 @@ impl<'s> ShmemReader<'s> {
         crate::debug!(?global_key_names, "cleared global argument variables");
         // we dont need to remove SELF as its gonna be set next execution anyway
 
+        if discard_value {
+            return_value.0 = LuaValue::Nil;
+        }
+
         Ok(return_value)
     }
 
@@ -203,4 +216,13 @@ impl<'s> ShmemReader<'s> {
         let value = lua.to_value(&temp_value)?;
         Ok(value)
     }
+}
+
+/// we can check we can index and get a handle to `function` but not execute.
+/// if it exists, resolve is still open and we can continue
+fn is_resolve_reachable(globals: &LuaTable, function: &str) -> Result<bool, RequestError> {
+    Ok(globals
+        .get::<LuaAnyUserData>(GLOBAL_RESOLVE)?
+        .get::<LuaFunction>(function)
+        .is_ok())
 }

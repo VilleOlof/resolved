@@ -23,7 +23,7 @@ pub(crate) mod __seal__ {
 /// - [`ItemRef`]
 /// - [`PooledResolve`](crate::PooledResolve)
 pub trait ResolveExecute: __seal__::Sealed {
-    fn execute<'c, T: DeserializeOwned + Send>(
+    fn execute<'c, T: DeserializeOwned + 'static + Send>(
         &'c self,
         script: impl Into<Script<'c>> + Send,
     ) -> impl Future<Output = Result<T, Error>> + Send;
@@ -57,7 +57,7 @@ pub trait ResolveStore: __seal__::Sealed {
 macro_rules! impl_execute {
     ($( $n:path ),*) => {$(
         impl ResolveExecute for $n {
-            fn execute<'c, T: DeserializeOwned + Send>(
+            fn execute<'c, T: DeserializeOwned + 'static + Send>(
                 &'c self,
                 script: impl Into<Script<'c>> + Send,
             ) -> impl Future<Output = Result<T, Error>> + Send {

@@ -16,7 +16,7 @@ mod dummy {
     use std::time::Duration;
 
     use futures::future::join_all;
-    use resolved::{Globals, ResolveConfig, prelude::*};
+    use resolved::{Globals, ResolveConfig, Void, prelude::*};
     use tokio::{spawn, time::sleep};
 
     #[tokio::test]
@@ -349,6 +349,56 @@ mod dummy {
     }
 
     #[tokio::test]
+    async fn script_remove_named() -> ResolveResult<()> {
+        let mut script = Script::new("a + b + c");
+        script = script
+            .named_arg("a", &5)?
+            .named_arg("b", &10)?
+            .named_arg("c", &1)?
+            .named_arg("d", &9)?;
+
+        assert_eq!(4, script.named_args().len());
+
+        script.remove_named_arg("b");
+        script.remove_named_arg("d");
+
+        assert_eq!(2, script.named_args().len());
+
+        script = script.named_arg("b", &1)?;
+
+        assert_eq!(3, script.named_args().len());
+        assert_eq!(vec!["a", "c", "b"], script.named_args());
+
+        let resolve = Resolve::new().await?;
+        let result = resolve.execute::<i32>(script).await?;
+        assert_eq!(7, result);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn script_overwrite_named() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let mut script = Script::new("a + a + b");
+        script = script.named_arg("a", &5)?.named_arg("b", &2)?;
+        assert_eq!(2, script.named_args().len());
+
+        let result_a: i32 = resolve.execute(script.clone()).await?;
+
+        script = script.named_arg("a", &8)?;
+        assert_eq!(2, script.named_args().len());
+
+        let result_b: i32 = resolve.execute(script).await?;
+
+        assert_ne!(result_a, result_b);
+        assert_eq!(12, result_a);
+        assert_eq!(18, result_b);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn pooled() -> ResolveResult<()> {
         let resolve = PooledResolve::new(4).await?;
 
@@ -457,6 +507,79 @@ mod dummy {
                 .await,
             "Expected WrongHandle"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn return_values() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
+
+        let int_u8 = resolve.execute::<u8>("5").await?;
+        assert_eq!(5u8, int_u8);
+        let int_i64 = resolve.execute::<i64>("9191919191919").await?;
+        assert_eq!(9191919191919i64, int_i64);
+        let float_f32 = resolve.execute::<f32>("14.23").await?;
+        assert_eq!(14.23f32, float_f32);
+
+        let string = resolve.execute::<String>(r#""resolved""#).await?;
+        assert_eq!("resolved", string);
+
+        let boolean = resolve.execute::<bool>("true").await?;
+        assert_eq!(true, boolean);
+
+        let unit = resolve.execute::<()>("nil").await?;
+        assert_eq!((), unit);
+        let unit = resolve.execute::<()>("").await?;
+        assert_eq!((), unit);
+        let none = resolve.execute::<Option<()>>("nil").await?;
+        assert_eq!(None, none);
+
+        let some = resolve.execute::<Option<i16>>("841").await?;
+        assert_eq!(Some(841i16), some);
+
+        // type doesnt matter since this fails in serializing in the first place
+        let err_userdata = resolve.execute::<()>("resolve").await;
+        assert_error!(Error::LuaModuleErr(_) = err_userdata);
+
+        let userdata = resolve.execute::<Void>("resolve").await?;
+        assert_eq!(Void, userdata);
+
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        struct Data {
+            name: String,
+            age: u8,
+            created: i64,
+        }
+
+        let custom_struct = resolve
+            .execute::<Data>(r#"{ name = "Ben", age = 23, created = 81 }"#)
+            .await?;
+        assert_eq!(
+            Data {
+                name: "Ben".to_string(),
+                age: 23,
+                created: 81
+            },
+            custom_struct
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn discord_return_value() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
+
+        // 'self' here is the resolve api, which is userdata that we cant serialize
+        // so we throw away it and thus just return `Void`
+        let discarded = resolve.execute::<Void>("self").await?;
+        assert_eq!(Void, discarded);
+
+        // since we didnt specify `Void`, it will try and serialize it and fail
+        // so the type here doesnt matter, could be anything and this would fail
+        let userdata = resolve.execute::<()>("self").await;
+        assert_error!(Error::LuaModuleErr(_) = userdata);
 
         Ok(())
     }
@@ -574,6 +697,19 @@ mod dummy {
 
             let six = resolve.store(script! { 6 }?).await?;
             assert_eq!(7, add_one(&resolve, six).await?);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn argument_names() -> Result<(), Error> {
+            let resolve = Resolve::new().await?;
+
+            let (a, b) = (16, 18);
+            let item = resolve.store("1").await?;
+
+            let script = script! { $a + $b + $b + @item }?;
+            assert_eq!(vec!["__c0", "__c1", "__r0"], script.named_args());
 
             Ok(())
         }

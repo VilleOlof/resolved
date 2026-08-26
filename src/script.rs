@@ -63,6 +63,8 @@ pub struct Script<'c> {
     ///
     /// If not specified it will use the default configured timeout in the [`Resolve`](crate::Resolve) instance
     pub(crate) timeout: Option<Duration>,
+    /// Discards the returned value, returning `()`
+    pub(crate) discard: bool,
 }
 
 /// The different types of argument.  
@@ -107,9 +109,10 @@ impl<'c> Script<'c> {
     {
         Self {
             lua: lua_script.into(),
-            with: None,
+            with: Option::default(),
             args: Vec::with_capacity(arg_cap),
-            timeout: None,
+            timeout: Option::default(),
+            discard: bool::default(),
         }
     }
 
@@ -130,6 +133,37 @@ impl<'c> Script<'c> {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
+    }
+
+    /// A list of all *named* arguments that has been added to this [`Script`]
+    #[inline]
+    #[must_use]
+    pub fn named_args(&self) -> Vec<&str> {
+        self.args
+            .iter()
+            .filter_map(|x| match x {
+                ArgData::Arg(_) | ArgData::ArgRef(_) => None,
+                ArgData::NamedArg { key, value: _ } | ArgData::NamedArgRef { key, value: _ } => {
+                    Some(*key)
+                }
+            })
+            .collect()
+    }
+
+    /// Removes the specified *named* arg with a `key`
+    #[inline]
+    pub fn remove_named_arg(&mut self, key: &'c str) {
+        self.args.retain(|x| match x {
+            ArgData::Arg(_) | ArgData::ArgRef(_) => true,
+            ArgData::NamedArgRef {
+                key: arg_key,
+                value: _,
+            }
+            | ArgData::NamedArg {
+                key: arg_key,
+                value: _,
+            } => *arg_key != key,
+        });
     }
 
     /// If we add a `with` [`ItemRef`], we need to validate that no previous pushed arguments have mismatched resolve ids
@@ -192,6 +226,8 @@ impl<'c> Script<'c> {
     /// If it can't properly serialize `value`, this will fail
     #[inline]
     pub fn named_arg<S: Serialize>(mut self, key: &'c str, value: &S) -> Result<Self, Error> {
+        self.remove_named_arg(key);
+
         let arg = ArgData::NamedArg {
             key,
             value: Cow::Owned(Self::ser(value)?),
@@ -207,6 +243,8 @@ impl<'c> Script<'c> {
     /// *(this is for a standard arg API and for the macros to work easier)*
     #[inline]
     pub fn named_arg_ref(mut self, key: &'c str, item_ref: impl ToLuaRef) -> Result<Self, Error> {
+        self.remove_named_arg(key);
+
         let arg = ArgData::NamedArgRef {
             key,
             value: item_ref.to_ref(),
@@ -264,7 +302,7 @@ impl std::fmt::Display for OwnedScript {
 }
 
 /// References which can be referenced by a single reference
-pub trait ToLuaRef: crate::traits::__seal__::Sealed {
+pub trait ToLuaRef {
     fn to_ref(&self) -> ItemRef;
 }
 

@@ -241,15 +241,32 @@ impl Resolve {
     /// pm.execute::<()>("self:SaveProject()").await?;
     /// ```
     ///
+    /// ### Discard values
+    /// Some values can't be serialized back to you *(`userdata` for example)*.\
+    /// To use `userdata` objects you can use [`ItemRef`]'s and [`store`](Resolve::store) which only returns a reference to values.
+    ///
+    /// But sometimes you might never ever want to serialize a value and don't care for the returned value.\
+    /// In this case you can specify [`Void`] as the return type and the value will be discarded in the module.\
+    /// This skips serializing the value at all, great if you *just* want to execute something.
+    ///
+    /// ```rust ignore
+    /// let resolve = Resolve::new().await?;
+    /// let nothing = resolve.execute::<Void>("return resolve:GetProjectManager()").await?;
+    /// assert_eq(Void, nothing);
+    /// ```
+    /// In this example, `GetProjectManager` returns a `userdata` which again, we can't serialize.
+    ///
     /// # Errors
     /// If the module executing the code fails or if the script can't be sent
     pub async fn execute<T>(&self, script: impl Into<Script<'_>>) -> Result<T, Error>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + 'static,
     {
-        let script = script.into();
+        let mut script = script.into();
+        script.discard = Void::is_void::<T>();
         match self.send_execute(&script).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
             ScriptResponse::Ok {
                 value,
                 #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
@@ -301,6 +318,7 @@ impl Resolve {
         let script = script.into();
         match self.send_store(&script).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
             ScriptResponse::Ok {
                 value,
                 #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
@@ -345,6 +363,7 @@ impl Resolve {
         let script = script.into();
         match self.send_store_table(&script).await? {
             resolved_shared::ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
             resolved_shared::ScriptResponse::Ok {
                 value: (source, list),
                 #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
@@ -388,6 +407,7 @@ impl Resolve {
 
         match self.send_table_keys(item.id()).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
             ScriptResponse::Ok {
                 value,
                 eval_time: _,
@@ -402,6 +422,7 @@ impl Resolve {
     {
         match self.send_item_value(item.id()).await? {
             ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
             ScriptResponse::Ok {
                 value,
                 eval_time: _,
@@ -416,7 +437,7 @@ impl Resolve {
         script: impl Into<Script<'c>>,
     ) -> Result<T, Error>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + 'static,
     {
         let mut script = script.into();
         script = script.with(item)?;
@@ -474,6 +495,18 @@ impl InnerResolve {
     /// Writes to the internal state that it's cancelled
     pub(crate) fn cancel(&self) {
         *self.cancelled.write() = true;
+    }
+}
+
+/// Makes an [`execute`](Resolve::execute) function discard it's return value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+pub struct Void;
+impl Void {
+    /// Returns if the specified type `T` is [`Void`]
+    #[inline]
+    pub(crate) fn is_void<T: 'static>() -> bool {
+        use std::any::TypeId;
+        TypeId::of::<T>() == TypeId::of::<Self>()
     }
 }
 
