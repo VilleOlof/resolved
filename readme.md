@@ -421,9 +421,9 @@ Mostly because DaVinci Resolve's lua file is named `lua5.1.lib` where most other
 This causes a clash which fails our custom lua module not to properly work.  
 
 So we need to recompile a new `.lib` file with the exports from DaVinci Resolve's `.dll` file to make our own working `.lib` file which `mlua-sys` can properly link against.  
-See [`lua_module`](./lua_module/readme.md) for more info on it.  
+See [`lua_module`](https://github.com/VilleOlof/resolved/blob/main/lua_module/readme.md) for more info on it.  
 
-And because of confusing dependency and build script problems, this `lua_module.dll` file is prebuilt and included in the library, but can be built yourself. Again see [`lua_module`](./lua_module/readme.md) & [`build_lib`](./build_lib/building.md) for more on building it.
+And because of confusing dependency and build script problems, this `lua_module.dll` file is prebuilt and included in the library, but can be built yourself. Again see [`lua_module`](https://github.com/VilleOlof/resolved/blob/main/lua_module/readme.md) & [`build_lib`](https://github.com/VilleOlof/resolved/blob/main/build_lib/building.md) for more on building it.
 
 I personally don't own a desktop Apple device *(DaVinci Resolve on linux doesn't even support this type of Scripting API)* so it's very difficult for me to make this library work on that platform.
 
@@ -520,4 +520,4 @@ Is this ever mismatched, the current process won't attempt to access any of it a
 This crate contains prebuilt `.dll` files which have only ever been compiled by the author.  
 To use these you must trust that I, the author haven't messed with them.  
 
-If you do not have this trust, see [`lua_module/readme`](./lua_module/readme.md) for compiling these yourself.
+If you do not have this trust, see [`lua_module/readme`](https://github.com/VilleOlof/resolved/blob/main/lua_module/readme.md) for compiling these yourself.

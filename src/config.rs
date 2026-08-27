@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-/// Configuration for `Resolve` instances
+/// Configuration for [`Resolve`](crate::Resolve) instances
 ///
 /// Can be used to increase the internal ping timeout and or if it should reset globals after every execution.
 #[derive(Debug, Clone, PartialEq)]
