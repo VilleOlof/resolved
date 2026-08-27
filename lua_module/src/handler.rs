@@ -9,7 +9,7 @@ use crate::{
     item_ref::ItemRefHandler,
     reader::ShmemReader,
     request::{serialize_noresolve, serialize_values},
-    table_keys,
+    table_keys, table_values,
 };
 
 /// Handles a specific request
@@ -128,6 +128,18 @@ pub fn handle_req(
             let time = Instant::now();
             let value = item_ref_handler.get::<LuaValue>(id)?;
             Ok(serialize_values(value, time.elapsed())?)
+        }
+        MsgPacket::TableValues => {
+            let id = reader.u64()?;
+            let value = item_ref_handler.get::<LuaValue>(id)?;
+            let table = match value {
+                LuaValue::Table(v) => v,
+                _ => return Err(RequestError::NotATable(value.type_name())),
+            };
+
+            let time = Instant::now();
+            let values = table_values(&table)?;
+            Ok(serialize_values(values, time.elapsed())?)
         }
     };
 }

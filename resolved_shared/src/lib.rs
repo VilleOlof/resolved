@@ -56,6 +56,9 @@ pub enum MsgPacket {
     TableKeys = 6,
     /// Returns the value stored in an `ItemRef`
     ItemValue = 7,
+    /// Returns all values from a table,
+    /// Used in `ItemRefList`
+    TableValues = 8,
 }
 
 impl MsgPacket {
@@ -70,6 +73,7 @@ impl MsgPacket {
             5 => Self::DropMany,
             6 => Self::TableKeys,
             7 => Self::ItemValue,
+            8 => Self::TableValues,
             _ => return None,
         })
     }

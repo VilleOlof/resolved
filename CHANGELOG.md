@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `source()` on `ItemRefList` to expose the lists source reference.  
+- `values()` on `ItemRefList` that behaves exactly like it's `keys()` function,  
+  and returns all values serialized as `T` at once.
+
+- `new_ref!`, creates a new struct wrapper around `ItemRef` that behaves the exact same.  
+- `new_ref_list!`, creates a new struct wrapper around `ItemRefList` that behaves the exact same.  
+
 ### Fixed
 
 - `fuscript`'s `stdout`, `stderr` and `stdin` are properly handled and null'd now.  

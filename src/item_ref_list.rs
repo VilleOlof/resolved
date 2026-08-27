@@ -59,16 +59,42 @@ impl ItemRefList {
     /// ```lua
     /// return { a = 1, b = 2, c = 3 }
     /// ```
-    /// This would return a `Vec<String>` with the values `["a", "b", "c"]`;
+    /// This would return a `Vec<String>` with the values `["a", "b", "c"]`.
     ///
     /// # Errors
-    /// If the module executing the code fails or if the script can't be sent
+    /// If the module executing the code fails, if the script can't be sent or `T` can't be serialized in the module.
     pub async fn keys<T>(&self) -> Result<Vec<T>, Error>
     where
         T: DeserializeOwned,
     {
         let source = &self.read().source;
         source.resolve().table_keys(source).await
+    }
+
+    /// Returns all values from the source referenced table.
+    ///
+    /// This sends a packet to the module to retrieve the values.\
+    /// All values must be able to serialize to the same type: `T`
+    ///
+    /// Instead of calling [`value`](ItemRef::value) on every element,\
+    /// this returns them all at once faster.
+    ///
+    /// ## Examples
+    ///
+    /// Take the following lua code:  
+    /// ```lua
+    /// return { 1, 3, 5, 7, 9, 11 }
+    /// ```
+    /// This would return a `Vec<i32>` *(or any integer really)* with the values: `[1, 3, 5, 7, 9, 11]`.
+    ///
+    /// # Errors
+    /// If the module executing the code fails, if the script can't be sent or `T` can't be serialized in the module.
+    pub async fn values<T>(&self) -> Result<Vec<T>, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let source = &self.read().source;
+        source.resolve().table_values(source).await
     }
 
     /// Returns a list of all [`ItemRef`]'s
@@ -109,6 +135,13 @@ impl ItemRefList {
     #[must_use]
     pub unsafe fn to_vec(&mut self) -> Vec<ItemRef> {
         std::mem::take(&mut self.write().refs)
+    }
+
+    /// Returns the `source` [`ItemRef`] which is the original *list* that all of the items exist in.
+    #[inline]
+    #[must_use]
+    pub fn source(&self) -> ItemRef {
+        self.read().source.clone()
     }
 
     /// Returns a read lock to the inner list value
@@ -211,5 +244,72 @@ impl Eq for ItemRefList {}
 impl PartialEq for RefList<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.refs() == other.refs()
+    }
+}
+
+/// Creates a new struct wrapper around an [`ItemRefList`].  
+///
+/// This new type implements every trait that [`ItemRefList`] does and behaves exactly like one.\
+/// Extremely useful if you need to juggle multiple [`ItemRefList`] and don't want to accidently mix them up:
+///
+/// ## Example
+/// ```ignore
+/// use resolved::prelude::*;
+///
+/// resolved::new_ref_list!(TimelineItems);
+///
+/// #[tokio::main]
+/// async fn main() -> ResolveResult<()> {
+///     let resolve = Resolve::new().await?;
+///
+///     let clips = {
+///         let items = resolve.store(script! {
+///             local pm = self:GetProjectManager()
+///             local p = pm:GetCurrentProject()
+///             local t = p:GetCurrentTimeline()
+///             return t:GetItemListInTrack("video", 1)
+///         }).await?;
+///         TimelineItems(items)
+///     };
+///
+///     let first_name: String = clips.list()[0]
+///         .execute(script! { self:GetName() }).await?;
+///
+///     Ok(())
+/// }
+/// ```
+///
+/// Supports optional visibility identifiers before the name and for the inner [`ItemRefList`]
+/// ```ignore
+/// new_ref_list!(Folders);
+/// new_ref_list!(pub Markers);
+/// new_ref_list!(pub Clips(pub));
+/// new_ref_list!(pub ProjectNames(pub(crate)));
+/// new_ref_list!(pub(crate) MediaPoolItems(pub));
+///
+/// // default visbility:
+/// new_ref_list!(TimelineItems(pub(crate)))
+/// ```
+#[macro_export]
+macro_rules! new_ref_list {
+    ($visibility:vis $name:ident($item_vis:vis)) => {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        $visibility struct $name($item_vis resolved::ItemRefList);
+
+        impl resolved::ToLuaRef for $name {
+            fn to_ref(&self) -> resolved::ItemRef {
+                self.0.source()
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = resolved::ItemRefList;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+    ($visibility:vis $name:ident) => {
+        resolved::new_ref_list!($visibility $name(pub(crate)));
     }
 }

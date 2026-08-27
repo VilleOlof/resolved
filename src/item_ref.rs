@@ -214,3 +214,73 @@ impl std::fmt::Display for ItemRef {
         f.write_str(itoa::Buffer::new().format(self.value.id))
     }
 }
+
+/// Creates a new struct wrapper around an [`ItemRef`].  
+///
+/// This new type implements every trait that [`ItemRef`] does and behaves exactly like one.\
+/// Extremely useful if you need to juggle multiple [`ItemRef`] and don't want to accidently mix them up:
+///
+/// ## Example
+/// ```ignore
+/// use resolved::prelude::*;
+///
+/// resolved::new_ref!(Project);
+///
+/// #[tokio::main]
+/// async fn main() -> ResolveResult<()> {
+///     let resolve = Resolve::new().await?;
+///
+///     let p: Project = {
+///         let item = resolve.store(script! {
+///             local pm = self:GetProjectManager()
+///             return pm:GetCurrentProject()
+///         }).await?;
+///         Project(item)
+///     };
+///
+///     let name: String = p.execute(script! { self:GetName() }).await?;
+///
+///     Ok(())
+/// }
+/// ```
+///
+/// Supports optional visibility identifiers before the name and for the inner [`ItemRef`]
+/// ```ignore
+/// new_ref!(ProjectManager);
+/// new_ref!(pub ProjectManager);
+/// new_ref!(pub Timeline(pub));
+/// new_ref!(pub TimelineItem(pub(crate)));
+/// new_ref!(pub(crate) MediaPool(pub));
+///
+/// // default visbility:
+/// new_ref!(Folder(pub(crate)))
+/// ```
+#[macro_export]
+macro_rules! new_ref {
+    ($visibility:vis $name:ident($item_vis:vis)) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        $visibility struct $name($item_vis resolved::ItemRef);
+
+        impl resolved::ToLuaRef for $name {
+            fn to_ref(&self) -> resolved::ItemRef {
+                self.0.clone()
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = resolved::ItemRef;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+    ($visibility:vis $name:ident) => {
+        resolved::new_ref!($visibility $name(pub(crate)));
+    }
+}

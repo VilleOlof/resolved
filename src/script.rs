@@ -313,7 +313,7 @@ impl ToLuaRef for ItemRef {
 }
 impl ToLuaRef for ItemRefList {
     fn to_ref(&self) -> ItemRef {
-        self.read().source.clone()
+        self.source()
     }
 }
 

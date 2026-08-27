@@ -226,6 +226,22 @@ mod dummy {
     }
 
     #[tokio::test]
+    async fn reference_list_values() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let map = resolve
+            .store_list("{ a = 15, b = 41, c = 95, d = 26, e = 82 }")
+            .await?;
+        assert_eq!(5, map.len());
+
+        let mut values = map.values::<u8>().await?;
+        values.sort(); // maps are random order
+        assert_eq!(vec![15, 26, 41, 82, 95], values);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn drop_reference_list() -> ResolveResult<()> {
         let resolve = Resolve::new().await?;
 
@@ -580,6 +596,37 @@ mod dummy {
         // so the type here doesnt matter, could be anything and this would fail
         let userdata = resolve.execute::<()>("self").await;
         assert_error!(Error::LuaModuleErr(_) = userdata);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn new_ref_macro() -> Result<(), Error> {
+        mod isolated {
+            resolved::new_ref!(pub Integer(pub));
+
+            resolved::new_ref_list!(pub Ids);
+        }
+
+        let resolve = Resolve::new().await?;
+
+        let int = {
+            let item_ref = resolve.store("5").await?;
+            isolated::Integer(item_ref)
+        };
+
+        let result: i32 = int.execute("self + 1").await?;
+        assert_eq!(6, result);
+
+        let ids = {
+            let list = resolve.store_list(r#"{ "cj41", "fioc", "lc81" }"#).await?;
+            isolated::Ids(list)
+        };
+
+        assert_eq!(3, ids.len());
+        let mut list = ids.values::<String>().await?;
+        list.sort();
+        assert_eq!(vec!["cj41", "fioc", "lc81"], list);
 
         Ok(())
     }

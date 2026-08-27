@@ -380,6 +380,42 @@ impl Resolve {
         }
     }
 
+    /// Get all values from a referenced table
+    ///
+    /// If you want all references from a table, see [`store_list`](Resolve::store_list).\
+    /// Or if you want all values directly, see [`table_values`](Resolve::table_values)
+    ///
+    /// The value stored in the [`ItemRef`] must be of type `Table` in lua.
+    ///
+    /// ## Example
+    ///
+    /// The following table:
+    /// ```lua
+    /// return { a = 1, b = 2, c = 3 }
+    /// ```
+    /// would return `[1, 2, 3]` and `T` would be of type [`i32`] here. *(or any integer)*
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent,
+    /// or if the referenced [`ItemRef`] is **not** a table
+    pub async fn table_values<T>(&self, item: &ItemRef) -> Result<Vec<T>, Error>
+    where
+        T: DeserializeOwned,
+    {
+        if self.id() != item.resolve().id() {
+            return Err(Error::MismatchedItemRef(self.id(), item.resolve().id()));
+        }
+
+        match self.send_table_values(item.id()).await? {
+            ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
+            ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
+            ScriptResponse::Ok {
+                value,
+                eval_time: _,
+            } => Ok(value),
+        }
+    }
+
     /// Get all keys from a referenced table
     ///
     /// If you want all values from a table, see [`store_list`](Resolve::store_list).  

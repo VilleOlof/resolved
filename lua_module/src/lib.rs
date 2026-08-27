@@ -211,6 +211,14 @@ fn table_keys(table: &LuaTable) -> LuaResult<Vec<LuaValue>> {
     Ok(t)
 }
 
+fn table_values(table: &LuaTable) -> LuaResult<Vec<LuaValue>> {
+    let mut t = Vec::with_capacity(table.len()? as usize);
+    for pair in table.pairs::<LuaValue, LuaValue>() {
+        t.push(pair?.1);
+    }
+    Ok(t)
+}
+
 /// Executes some lua code and times it
 fn execute(lua: &Lua, code: &str) -> Result<(LuaValue, Duration), RequestError> {
     let lua_code = lua.load(code);

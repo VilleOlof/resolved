@@ -239,6 +239,29 @@ impl Resolve {
         r
     }
 
+    /// Send a [`MsgPacket::TableValues`] packet to the module
+    pub(crate) async fn send_table_values<T>(
+        &self,
+        id: u64,
+    ) -> Result<ScriptResponse<Vec<T>>, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let r = self
+            .send_packet(
+                MsgPacket::TableValues,
+                None,
+                |data| {
+                    data.put_data(&id.to_be_bytes())?;
+                    Ok(())
+                },
+                |buf| Ok(rmp_serde::from_slice(buf)?),
+            )
+            .await;
+        log_id!(id, "send_table_values");
+        r
+    }
+
     /// Send a [`MsgPacket::ItemValue`] packet to the module
     pub(crate) async fn send_item_value<T>(&self, id: u64) -> Result<ScriptResponse<T>, Error>
     where
