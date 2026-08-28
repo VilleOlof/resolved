@@ -360,22 +360,42 @@ impl Resolve {
     /// If the module executing the code fails or if the script can't be sent.\
     /// Or if the returned value from lua was not a *table*
     pub async fn store_list(&self, script: impl Into<Script<'_>>) -> Result<ItemRefList, Error> {
+        self.store_list_option(script)
+            .await?
+            .ok_or(Error::NilItemRef)
+    }
+
+    /// Maybe stores a reference to `Lua` values in `Rust`
+    ///
+    /// If the returned value is `nil`, this will return `None`
+    ///
+    /// Look at [`store`](Resolve::store_list) for more info.
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent.\
+    /// Or if the returned value from lua was not a *table*
+    pub async fn store_list_option(
+        &self,
+        script: impl Into<Script<'_>>,
+    ) -> Result<Option<ItemRefList>, Error> {
         let script = script.into();
         match self.send_store_table(&script).await? {
             resolved_shared::ScriptResponse::Err(e) => Err(Error::LuaModuleErr(e)),
             ScriptResponse::UnableToReachResolve => Err(Error::UnableToReachDavinciResolve),
             resolved_shared::ScriptResponse::Ok {
-                value: (source, list),
+                value,
                 #[allow(unused_variables, reason = "used when 'tracing' is enabled")]
                 eval_time,
             } => {
                 log_script_resposne!(script, eval_time, "store_list");
-                Ok(ItemRefList::new(
-                    unsafe { ItemRef::new(self.clone(), source) },
-                    list.into_iter()
-                        .map(|x| unsafe { ItemRef::new(self.clone(), x) })
-                        .collect(),
-                ))
+                Ok(value.map(|(source, list)| {
+                    ItemRefList::new(
+                        unsafe { ItemRef::new(self.clone(), source) },
+                        list.into_iter()
+                            .map(|x| unsafe { ItemRef::new(self.clone(), x) })
+                            .collect(),
+                    )
+                }))
             }
         }
     }
@@ -509,6 +529,16 @@ impl Resolve {
         let mut script = script.into();
         script = script.with(item)?;
         self.store_list(script).await
+    }
+
+    pub(crate) async fn store_list_option_with<'c>(
+        &self,
+        item: &'c ItemRef,
+        script: impl Into<Script<'c>>,
+    ) -> Result<Option<ItemRefList>, Error> {
+        let mut script = script.into();
+        script = script.with(item)?;
+        self.store_list_option(script).await
     }
 
     /// Shutdowns the connected module.  

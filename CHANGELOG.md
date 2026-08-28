@@ -15,10 +15,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `new_ref!`, creates a new struct wrapper around `ItemRef` that behaves the exact same.  
 - `new_ref_list!`, creates a new struct wrapper around `ItemRefList` that behaves the exact same.  
 
+- `store_list_option` to `Resolve` and `ItemRef` which *maybe* returns a reference to a lua table.  
+  Since single `store` has a `store_option`, the list variant should also have one.
+- `store_list_option` to `ResolveStore` trait
+
 ### Fixed
 
 - `fuscript`'s `stdout`, `stderr` and `stdin` are properly handled and null'd now.  
 - spawning of `fuscript` now never creates a new window regardless of it's process context.  
+
+### Removed
+
+- `__seal__::Sealed` bounds from `ResolveStore` & `ResolveExecute`, now consumer *can* implement these themself.  
+  This was made so `new_ref!` macro can auto implement it in it's macro so the wrappers behaves exactly like ItemRefs.
 
 ## [0.2.0] - 2026-08-26
 

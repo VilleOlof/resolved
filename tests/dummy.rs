@@ -16,7 +16,7 @@ mod dummy {
     use std::time::Duration;
 
     use futures::future::join_all;
-    use resolved::{Globals, ResolveConfig, Void, prelude::*};
+    use resolved::{Globals, ResolveConfig, ResolveExecute, ResolveStore, Void, prelude::*};
     use tokio::{spawn, time::sleep};
 
     #[tokio::test]
@@ -125,6 +125,28 @@ mod dummy {
         assert!(item.is_some());
 
         let item = resolve.store_option(r#"nil"#).await?;
+        assert!(item.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn item_list_option_reference() -> ResolveResult<()> {
+        let resolve = Resolve::new().await?;
+
+        let item = resolve.store_list_option(r#"true"#).await;
+        assert_error!(Error::LuaModuleErr(_) = item);
+
+        let item = resolve.store_list_option(r#"{}"#).await?;
+        assert!(item.is_some());
+
+        let item = resolve.store_list_option(r#"{ 1, 2 }"#).await?;
+        assert!(item.is_some());
+
+        let item = resolve.store_list_option(r#"{ a = 13, b = 54 }"#).await?;
+        assert!(item.is_some());
+
+        let item = resolve.store_list_option(r#"nil"#).await?;
         assert!(item.is_none());
 
         Ok(())
@@ -627,6 +649,36 @@ mod dummy {
         let mut list = ids.values::<String>().await?;
         list.sort();
         assert_eq!(vec!["cj41", "fioc", "lc81"], list);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_traits() -> Result<(), Error> {
+        let resolve = Resolve::new().await?;
+        let pool = PooledResolve::new(2).await?;
+
+        async fn exec(executor: impl ResolveExecute) -> Result<i32, Error> {
+            executor.execute("5 + 1").await
+        }
+
+        assert_eq!(6, exec(resolve.clone()).await?);
+        assert_eq!(6, exec(pool).await?);
+
+        let item = resolve.store("1").await?;
+        assert_eq!(6, exec(item.clone()).await?);
+
+        async fn store(executor: impl ResolveStore, val: i32) -> Result<ItemRef, Error> {
+            executor.store(val.to_string()).await
+        }
+
+        assert_eq!(2, store(resolve.clone(), 2).await?.value::<i32>().await?);
+        assert_eq!(8, store(item.clone(), 8).await?.value::<i32>().await?);
+
+        resolved::new_ref!(Int);
+        let int = Int(item.clone());
+
+        assert_eq!(8, store(int.clone(), 8).await?.value::<i32>().await?);
 
         Ok(())
     }

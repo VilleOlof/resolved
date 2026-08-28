@@ -2,27 +2,12 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, ItemRef, ItemRefList, Resolve, Script};
 
-pub(crate) mod __seal__ {
-    use crate::{ItemRef, ItemRefList, Resolve, ToLuaRef};
-
-    pub trait Sealed {}
-
-    impl Sealed for Resolve {}
-
-    impl Sealed for ItemRef {}
-    impl Sealed for ItemRefList {}
-    impl<T: ToLuaRef> Sealed for &T {}
-
-    #[cfg(feature = "pool")]
-    impl Sealed for crate::PooledResolve {}
-}
-
 /// All types that you can call `.execute` on and run some lua code which returns the value.
 ///
 /// - [`Resolve`]
 /// - [`ItemRef`]
 /// - [`PooledResolve`](crate::PooledResolve)
-pub trait ResolveExecute: __seal__::Sealed {
+pub trait ResolveExecute {
     fn execute<'c, T: DeserializeOwned + 'static + Send>(
         &'c self,
         script: impl Into<Script<'c>> + Send,
@@ -37,7 +22,7 @@ pub trait ResolveExecute: __seal__::Sealed {
 /// Note that [`PooledResolve`](crate::PooledResolve) can't be used to store and use references in,
 /// if you could, it would need to sync all references across all lua modules in every instance,
 /// this is unfeasable and would require too much syncing and extra house keeping to keep track of right.
-pub trait ResolveStore: __seal__::Sealed {
+pub trait ResolveStore {
     fn store<'c>(
         &'c self,
         script: impl Into<Script<'c>> + Send,
@@ -52,6 +37,11 @@ pub trait ResolveStore: __seal__::Sealed {
         &'c self,
         script: impl Into<Script<'c>> + Send,
     ) -> impl Future<Output = Result<ItemRefList, Error>> + Send;
+
+    fn store_list_option<'c>(
+        &'c self,
+        script: impl Into<Script<'c>> + Send,
+    ) -> impl Future<Output = Result<Option<ItemRefList>, Error>> + Send;
 }
 
 macro_rules! impl_execute {
@@ -88,6 +78,13 @@ macro_rules! impl_store {
                 script: impl Into<Script<'c>> + Send
             ) -> impl Future<Output = Result<ItemRefList, Error>> + Send {
                 self.store_list(script)
+            }
+
+            fn store_list_option<'c>(
+                &'c self,
+                script: impl Into<Script<'c>> + Send
+            ) -> impl Future<Output = Result<Option<ItemRefList>, Error>> + Send {
+                self.store_list_option(script)
             }
         }
     )*};

@@ -119,6 +119,7 @@ impl ItemRef {
     }
 
     /// Store multiple references to `Lua` values in `Rust`,
+    /// global variable `self` is set to the value stored in the [`ItemRef`].
     ///
     /// Look at [`Resolve::store_list`] for more info on how it works.  
     ///
@@ -130,6 +131,23 @@ impl ItemRef {
         script: impl Into<Script<'c>>,
     ) -> Result<ItemRefList, Error> {
         self.resolve().store_list_with(self, script).await
+    }
+
+    /// Maybe stores multiple references to `Lua` values in `Rust`,
+    /// global variable `self` is set to the value stored in the [`ItemRef`].
+    ///
+    /// If the returned value is `nil`, this will return `None`.
+    ///
+    /// Look at [`Resolve::store_list`] for more info on how it works.  
+    ///
+    /// # Errors
+    /// If the module executing the code fails or if the script can't be sent.\
+    /// Or if the returned value from lua was not a *table*
+    pub async fn store_list_option<'c>(
+        &'c self,
+        script: impl Into<Script<'c>>,
+    ) -> Result<Option<ItemRefList>, Error> {
+        self.resolve().store_list_option_with(self, script).await
     }
 
     /// Returns the referenced value directly.
@@ -279,6 +297,38 @@ macro_rules! new_ref {
                 &self.0
             }
         }
+
+        impl resolved::ResolveStore for $name {
+            fn store<'c>(
+                &'c self,
+                script: impl Into<resolved::Script<'c>> + Send
+            ) -> impl Future<Output = Result<resolved::ItemRef, resolved::Error>> + Send {
+                self.0.store(script)
+            }
+
+            fn store_option<'c>(
+                &'c self,
+                script: impl Into<resolved::Script<'c>> + Send
+            ) -> impl Future<Output = Result<Option<resolved::ItemRef>, resolved::Error>> + Send {
+                self.0.store_option(script)
+            }
+
+            fn store_list<'c>(
+                &'c self,
+                script: impl Into<resolved::Script<'c>> + Send
+            ) -> impl Future<Output = Result<resolved::ItemRefList, resolved::Error>> + Send {
+                self.0.store_list(script)
+            }
+
+            fn store_list_option<'c>(
+                &'c self,
+                script: impl Into<resolved::Script<'c>> + Send
+            ) -> impl Future<Output = Result<Option<resolved::ItemRefList>, resolved::Error>> + Send {
+                self.0.store_list_option(script)
+            }
+        }
+
+
     };
     ($visibility:vis $name:ident) => {
         resolved::new_ref!($visibility $name(pub(crate)));

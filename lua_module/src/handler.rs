@@ -69,6 +69,10 @@ pub fn handle_req(
                     Err(e) => return Err(e),
                 };
 
+            if value.is_nil() {
+                return Ok(serialize_values(None::<(u64, Vec<u64>)>, eval_time)?);
+            }
+
             let table = value
                 .as_table()
                 .ok_or(RequestError::NotATable(value.type_name()))?;
@@ -90,7 +94,7 @@ pub fn handle_req(
                 ids.push(id);
             }
 
-            Ok(serialize_values((source_id, ids), eval_time)?)
+            Ok(serialize_values(Some((source_id, ids)), eval_time)?)
         }
         MsgPacket::DropMany => {
             let len = reader.u32()?;

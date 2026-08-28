@@ -172,7 +172,7 @@ impl Resolve {
     pub(crate) async fn send_store_table(
         &self,
         script: &Script<'_>,
-    ) -> Result<ScriptResponse<(u64, Vec<u64>)>, Error> {
+    ) -> Result<ScriptResponse<Option<(u64, Vec<u64>)>>, Error> {
         self.send_packet(
             MsgPacket::StoreTable,
             script.timeout(),
