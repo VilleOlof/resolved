@@ -1,12 +1,13 @@
 use std::{
     fmt::Debug,
+    os::windows::io::AsHandle,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 
 use parking_lot::RwLock;
-use resolved_shared::{ScriptResponse, instance_dir, shmem_path};
+use resolved_shared::{ScriptResponse, ShmemData, instance_dir, shmem_path};
 use serde::de::DeserializeOwned;
 use tokio::{
     fs::{create_dir, write},
@@ -57,7 +58,7 @@ macro_rules! log_script_resposne {
 /// ## Clone
 /// The internal connection to *`DaVinci Resolve`* is the same if you were to run `.clone()` on [`Resolve`].\
 /// So [`Resolve`] can be cheaply cloned and passed around.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Resolve {
     /// All inner data for the instance, wrapped in Arc to be cheaply cloned and referenced,  
     inner: Arc<InnerResolve>,
@@ -79,10 +80,32 @@ struct InnerResolve {
     child: Child,
 }
 
-#[derive(Debug)]
 pub(crate) struct PacketHandler {
     pub(crate) shmem: ShmemClient,
     pub(crate) pipe: Pipe,
+}
+
+impl std::fmt::Debug for Resolve {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = &self.inner;
+        f.debug_struct("Resolve")
+            .field("id", &s.id)
+            .field("timeout", &s.default_timeout)
+            .field("cancelled", &*s.cancelled.read())
+            .field("packet_handler", &s.packet_handler)
+            .field("module_pipe", &s._module_pipe.as_handle())
+            .field("child", &s.child.id().unwrap_or_default())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for PacketHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PacketHandler")
+            .field("shmem", &self.shmem.id())
+            .field("pipe", &self.pipe.as_handle())
+            .finish()
+    }
 }
 
 // when the inner arc'd resolve instance is fully dropped then we can discard the module and bg tasks
@@ -182,6 +205,13 @@ impl Resolve {
     #[must_use]
     pub fn dir(&self) -> PathBuf {
         instance_dir(self.id())
+    }
+
+    /// If some thread/task is actively executing code, thus any call to [`execute`](Resolve::execute) or [`store`](Resolve::store) would have to wait until it's unlocked.
+    #[inline]
+    #[must_use]
+    pub async fn is_locked(&self) -> bool {
+        self.inner.packet_handler.try_lock().is_err()
     }
 
     #[inline]

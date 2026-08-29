@@ -21,6 +21,10 @@ macro_rules! shmem_struct {
             fn ptr(&self) -> *mut u8 {
                 self.ptr
             }
+
+            fn id(&self) -> &str {
+                self._schmem.get_os_id()
+            }
         }
 
         impl std::fmt::Debug for $name {
@@ -83,6 +87,8 @@ pub trait ShmemData {
 
     /// The ptr to the start of the shared memory
     fn ptr(&self) -> *mut u8;
+
+    fn id(&self) -> &str;
 
     /// Returns the owner of the shared memory
     fn get_owner(&self) -> ShmemOwner {

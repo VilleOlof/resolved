@@ -308,6 +308,12 @@ macro_rules! new_ref_list {
                 &self.0
             }
         }
+
+        impl $name {
+            pub fn inner(self) -> resolved::ItemRefList {
+                self.0
+            }
+        }
     };
     ($visibility:vis $name:ident) => {
         resolved::new_ref_list!($visibility $name(pub(crate)));

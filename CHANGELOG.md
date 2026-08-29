@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Since single `store` has a `store_option`, the list variant should also have one.
 - `store_list_option` to `ResolveStore` trait
 
+- `is_locked` function to `Resolve` which tries to briefly get the lock.  
+  if it fails, some other task is executing code and is thus locked.
+
 ### Fixed
 
 - `fuscript`'s `stdout`, `stderr` and `stdin` are properly handled and null'd now.  
