@@ -96,6 +96,13 @@ impl ResolveConfig {
         self.is_resolve_available = is_resolve_available;
         self
     }
+    /// Set's `module_init_timeout` to the specified value.
+    #[inline]
+    #[must_use]
+    pub fn module_init_timeout(mut self, module_init_timeout: Duration) -> Self {
+        self.module_init_timeout = module_init_timeout;
+        self
+    }
 }
 
 impl Default for ResolveConfig {
