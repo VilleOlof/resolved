@@ -21,7 +21,7 @@ mod pool;
 #[cfg(feature = "pool")]
 pub use pool::PooledResolve;
 
-pub use config::{Globals, ResolveConfig};
+pub use config::{CleanupConfig, Globals, ResolveConfig};
 pub use error::Error;
 pub use item_ref::ItemRef;
 pub use item_ref_list::{ItemRefList, RefList};
