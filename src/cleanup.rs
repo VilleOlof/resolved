@@ -10,21 +10,36 @@ use tokio::fs::{create_dir_all, remove_dir_all, remove_file};
 
 use crate::{Error, script_handler::MODULE_NAME};
 
-/// Amount of temporary directories needed to run the cleanup
-///
-/// This will be around every 250 Mb of files
-const CHECK_REQUIREMENT: usize = 512;
-/// Directories to remove must be at least this old
-const DIRECTORY_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 /// A global .lock file in the resolved dir so that only one handler can attempt a cleanup at a time.  
 ///
 /// If another instance tries to cleanup and fails to get the lock it will just not attempt a cleanup and continue
 const LOCK_FILE: &str = ".lock";
 
+/// Configuration to use when checking if a cleanup should occur or if at all
+#[derive(Debug, PartialEq, Clone)]
+pub struct CleanupConfig {
+    /// Amount of temporary directories needed to run the cleanup
+    pub count: usize,
+    /// Directores to remove must be at least this amount of time old
+    pub age: Duration,
+    /// This skips cleanup and never runs it
+    pub skip: bool,
+}
+
+impl Default for CleanupConfig {
+    fn default() -> Self {
+        Self {
+            count: 256,
+            age: Duration::from_secs(12 * 60 * 60),
+            skip: false,
+        }
+    }
+}
+
 /// Ensures the [`RESOLVED_ROOT`] directory exists for instances.  
 ///
 /// Also spawns a background task that checks if a cleanup should start and if so begins to clean stale, old files
-pub async fn check() -> Result<(), Error> {
+pub async fn check(config: CleanupConfig) -> Result<(), Error> {
     let base = RESOLVED_ROOT.clone();
 
     // we must run this so we for sure have our resolved root
@@ -56,11 +71,11 @@ pub async fn check() -> Result<(), Error> {
         let dir_count = base.read_dir().map_or(0, std::iter::Iterator::count);
         // we must also have enough old directories
         // but we first do a simple check and then a more time taking check
-        if dir_count <= CHECK_REQUIREMENT && !has_enough_old(&base).unwrap_or(false) {
+        if dir_count <= config.count && !has_enough_old(&base, &config).unwrap_or(false) {
             return;
         }
 
-        if let Err(e) = run_cleanup(base).await {
+        if let Err(e) = run_cleanup(base, &config).await {
             eprintln!("{e:?}");
         }
 
@@ -70,33 +85,33 @@ pub async fn check() -> Result<(), Error> {
     Ok(())
 }
 
-fn has_enough_old(base: &Path) -> Result<bool, Error> {
+fn has_enough_old(base: &Path, config: &CleanupConfig) -> Result<bool, Error> {
     let now = SystemTime::now();
     let mut old_dirs = 0;
     for dir in base.read_dir()? {
         let dir = dir?;
-        if is_old(&dir, now)? {
+        if is_old(&dir, now, config.age)? {
             old_dirs += 1;
         }
 
         // early return, weve gotten enough
-        if old_dirs > CHECK_REQUIREMENT {
+        if old_dirs > config.count {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn is_old(dir: &DirEntry, now: SystemTime) -> Result<bool, Error> {
+fn is_old(dir: &DirEntry, now: SystemTime, age: Duration) -> Result<bool, Error> {
     let created = dir.metadata()?.created()?;
-    if now.duration_since(created).is_ok_and(|d| d > DIRECTORY_AGE) {
+    if now.duration_since(created).is_ok_and(|d| d > age) {
         Ok(true)
     } else {
         Ok(false)
     }
 }
 
-async fn run_cleanup(base: PathBuf) -> Result<(), Error> {
+async fn run_cleanup(base: PathBuf, config: &CleanupConfig) -> Result<(), Error> {
     let now = SystemTime::now();
 
     let mut cleaned = 0;
@@ -108,7 +123,7 @@ async fn run_cleanup(base: PathBuf) -> Result<(), Error> {
             continue;
         }
 
-        if !is_old(&dir, now)? {
+        if !is_old(&dir, now, config.age)? {
             continue;
         }
 

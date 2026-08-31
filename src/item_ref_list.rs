@@ -137,6 +137,46 @@ impl ItemRefList {
         std::mem::take(&mut self.write().refs)
     }
 
+    /// Appends an [`ItemRef`] to the back of the stored references
+    ///
+    /// # Safety
+    /// This is marked as `unsafe` since preferebly the item should only have one reference to it,
+    /// otherwise adding something to this list is meaningless and *can* do undefined behavior.
+    #[inline]
+    pub unsafe fn push(&mut self, item: ItemRef) {
+        self.write().refs.push(item);
+    }
+
+    /// Inserts an [`ItemRef`] at position index within the stored references, shifting all [`ItemRef`]'s after it to the right.
+    ///
+    /// # Safety
+    /// This is marked as `unsafe` since preferebly the item should only have one reference to it,
+    /// otherwise adding something to this list is meaningless and *can* do undefined behavior.
+    #[inline]
+    pub unsafe fn insert(&mut self, i: usize, item: ItemRef) {
+        self.write().refs.insert(i, item);
+    }
+
+    /// Removes the last [`ItemRef`] from the stored references and returns it, or None if it is empty.
+    ///
+    /// # Safety
+    /// This is marked as `unsafe` since preferebly the item should only have one reference to it,
+    /// otherwise adding something to this list is meaningless and *can* do undefined behavior.
+    #[inline]
+    pub unsafe fn pop(&mut self) -> Option<ItemRef> {
+        self.write().refs.pop()
+    }
+
+    /// Removes and returns the [`ItemRef`] at position index within the stored references, shifting all [`ItemRef`]'s after it to the left.
+    ///
+    /// # Safety
+    /// This is marked as `unsafe` since preferebly the item should only have one reference to it,
+    /// otherwise adding something to this list is meaningless and *can* do undefined behavior.
+    #[inline]
+    pub unsafe fn remove(&mut self, i: usize) -> ItemRef {
+        self.write().refs.remove(i)
+    }
+
     /// Returns the `source` [`ItemRef`] which is the original *list* that all of the items exist in.
     #[inline]
     #[must_use]

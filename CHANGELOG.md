@@ -19,8 +19,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Since single `store` has a `store_option`, the list variant should also have one.
 - `store_list_option` to `ResolveStore` trait
 
+- mutable functions to `ItemRefList` so you can add and remove refs from the internal list.  
+  These are unsafe, `push`, `insert`, `pop`, `remove`
+
 - `is_locked` function to `Resolve` which tries to briefly get the lock.  
   if it fails, some other task is executing code and is thus locked.
+
+- `CleanupConfig`, so values like age or amount of needed stale files are configurable on each instance.
+
+### Changed
+
+- Default stale files required to run cleanup from `512` to `256`
 
 ### Fixed
 

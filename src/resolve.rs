@@ -149,8 +149,8 @@ impl Resolve {
     /// - The setup server communication fails
     /// - The module startup fails
     pub async fn new_with_config(config: &ResolveConfig) -> Result<Self, Error> {
-        if !config.skip_cleanup {
-            cleanup::check().await?;
+        if !config.cleanup.skip {
+            cleanup::check(config.cleanup.clone()).await?;
         }
 
         #[cfg(feature = "tracing")]
@@ -646,7 +646,7 @@ async fn start(
 
     write_config(&mut module_pipe, config).await?;
 
-    let pipe = handle_module_request(&mut module_pipe, pipe).await?;
+    let pipe = handle_module_request(&mut module_pipe, pipe, config.module_init_timeout).await?;
 
     #[cfg(feature = "tracing")]
     tracing::trace!("Module started correctly, finished");

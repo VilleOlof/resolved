@@ -30,7 +30,6 @@ pub(crate) const MODULE_NAME: &str = "vinci";
 /// The default path on windows to `fuscript.exe`
 pub(crate) const DEFAULT_FUSCRIPT: &str =
     "C:/Program Files/Blackmagic Design/DaVinci Resolve/fuscript.exe";
-pub(crate) const MODULE_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Generates a `.lua` script that sets the cpath to contain the specified `.dll` directory and starts the internal lua module.\
 /// `{path}/?.dll` so the directory that should contain it
@@ -99,6 +98,7 @@ pub(crate) async fn spawn_script_server(
 pub(crate) async fn handle_module_request(
     module_pipe: &mut Pipe,
     pipe: PipeListener,
+    timeout: Duration,
 ) -> Result<Pipe, Error> {
     async fn read_err(pipe: &mut Pipe) -> Result<Error, Error> {
         let len = pipe.read_u32().await?;
@@ -108,12 +108,12 @@ pub(crate) async fn handle_module_request(
         Ok(Error::LuaModuleErr(err))
     }
 
-    let sleep = tokio::time::sleep(MODULE_TIMEOUT);
+    let sleep = tokio::time::sleep(timeout);
     tokio::pin!(sleep);
 
     // timeout, or if the module pipe connects (module is ready), or the module errors in setup
     select! {
-        () = &mut sleep => Err(Error::ModuleTimeout),
+        () = &mut sleep => Err(Error::ModuleTimeout(timeout)),
         pipe = pipe.accept() => Ok(pipe?),
         p = module_pipe.read_u8() => {
             let packet_type = PrePacket::from_u8(p?).ok_or(Error::InvalidPacketType)?;

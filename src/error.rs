@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use crate::script_handler::MODULE_TIMEOUT;
-
 /// Any error that can occur while using `resolved`
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -11,8 +9,8 @@ pub enum Error {
     LuaModuleErr(String),
     #[error("permits got out of sync with actual instances")]
     OutOfSyncSemaphore,
-    #[error("Module didn't respond with any packet within {:?}", MODULE_TIMEOUT)]
-    ModuleTimeout,
+    #[error("Module didn't respond with any packet within {0:?}")]
+    ModuleTimeout(Duration),
     #[error("Packet type from Module was invalid")]
     InvalidPacketType,
     #[error(

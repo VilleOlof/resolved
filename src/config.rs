@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+pub use crate::cleanup::CleanupConfig;
+
 /// Configuration for [`Resolve`](crate::Resolve) instances
 ///
 /// Can be used to increase the internal ping timeout and or if it should reset globals after every execution.
@@ -21,8 +23,8 @@ pub struct ResolveConfig {
     pub tracing: bool,
     /// Every so often when you create a [`Resolve`](crate::Resolve) instance, it will run a background cleanup job to remove stale files created by the crate.  
     ///
-    /// This skips this cleanup and never runs it when creating this instance
-    pub skip_cleanup: bool,
+    /// This configures when and if that cleanup runs.
+    pub cleanup: CleanupConfig,
     /// Specifies a root Scripting API function to check if it exists during each execution request.\
     /// If this specifed function does *not* exist, the module will assume that `DaVinci Resolve` is unreachable.\
     /// This makes the functions return a proper [`Error::UnableToReachDavinciResolve`](crate::Error::UnableToReachDavinciResolve) error if so.
@@ -31,6 +33,8 @@ pub struct ResolveConfig {
     ///
     /// Roughly, this adds one extra internal call to verify
     pub is_resolve_available: Option<String>,
+    /// The timeout time for when the lua module is initializing itself.
+    pub module_init_timeout: Duration,
 }
 
 impl ResolveConfig {
@@ -42,12 +46,8 @@ impl ResolveConfig {
     #[must_use]
     pub fn keep_globals() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
             reset_globals: false,
-            globals: Globals::default(),
-            tracing: false,
-            skip_cleanup: false,
-            is_resolve_available: None,
+            ..Default::default()
         }
     }
 }
@@ -82,11 +82,11 @@ impl ResolveConfig {
         self.tracing = tracing;
         self
     }
-    /// Set's `skip_cleanup` to the specified value.
+    /// Set's `cleanup` to the specified value.
     #[inline]
     #[must_use]
-    pub fn skip_cleanup(mut self, skip_cleanup: bool) -> Self {
-        self.skip_cleanup = skip_cleanup;
+    pub fn cleanup(mut self, cleanup: CleanupConfig) -> Self {
+        self.cleanup = cleanup;
         self
     }
     /// Set's `is_resolve_available` to the specified value.
@@ -105,8 +105,9 @@ impl Default for ResolveConfig {
             reset_globals: true,
             globals: Globals::default(),
             tracing: false,
-            skip_cleanup: false,
+            cleanup: CleanupConfig::default(),
             is_resolve_available: None,
+            module_init_timeout: Duration::from_secs(25),
         }
     }
 }
